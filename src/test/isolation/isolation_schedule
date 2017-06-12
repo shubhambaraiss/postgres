@@ -57,3 +57,5 @@ test: alter-table-3
 test: create-trigger
 test: async-notify
 test: timeouts
+test: predicate-gist
+test: predicate-gist-2
