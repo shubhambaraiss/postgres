@@ -33,6 +33,7 @@
 #include "miscadmin.h"
 #include "storage/lmgr.h"
 #include "storage/smgr.h"
+#include "storage/predicate.h"
 
 
 static bool _hash_alloc_buckets(Relation rel, BlockNumber firstblock,
@@ -945,6 +946,10 @@ restart_expand:
 					  buf_oblkno, buf_nblkno, NULL,
 					  maxbucket, highmask, lowmask);
 
+	PredicateLockPageSplit(rel,
+				BufferGetBlockNumber(buf_oblkno),
+				BufferGetBlockNumber(buf_nblkno));
+
 	/* all done, now release the locks and pins on primary buckets. */
 	_hash_relbuf(rel, buf_oblkno);
 	_hash_relbuf(rel, buf_nblkno);
@@ -1412,6 +1417,10 @@ _hash_finish_split(Relation rel, Buffer metabuf, Buffer obuf, Bucket obucket,
 	_hash_splitbucket(rel, metabuf, obucket,
 					  nbucket, obuf, bucket_nbuf, tidhtab,
 					  maxbucket, highmask, lowmask);
+
+	PredicateLockPageSplit(rel,
+				BufferGetBlockNumber(obuf),
+				BufferGetBlockNumber(bucket_nbuf));
 
 	_hash_relbuf(rel, bucket_nbuf);
 	LockBuffer(obuf, BUFFER_LOCK_UNLOCK);

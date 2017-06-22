@@ -59,3 +59,6 @@ test: async-notify
 test: timeouts
 test: predicate-gist
 test: predicate-gist-2
+test: predicate-hash
+test: predicate-hash-2
+

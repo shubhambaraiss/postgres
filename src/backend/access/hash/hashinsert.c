@@ -17,6 +17,7 @@
 
 #include "access/hash.h"
 #include "access/hash_xlog.h"
+#include "storage/predicate.h"
 #include "miscadmin.h"
 #include "utils/rel.h"
 
@@ -81,6 +82,8 @@ restart_insert:
 	/* Lock the primary bucket page for the target bucket. */
 	buf = _hash_getbucketbuf_from_hashkey(rel, hashkey, HASH_WRITE,
 										  &usedmetap);
+	CheckForSerializableConflictIn(rel, NULL, buf);
+
 	Assert(usedmetap != NULL);
 
 	/* remember the primary bucket buffer to release the pin on it at end. */
