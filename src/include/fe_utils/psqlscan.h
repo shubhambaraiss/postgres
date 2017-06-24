@@ -48,13 +48,22 @@ typedef enum _promptStatus
 	PROMPT_COPY
 } promptStatus_t;
 
+/* Quoting request types for get_variable() callback */
+typedef enum
+{
+	PQUOTE_PLAIN,				/* just return the actual value */
+	PQUOTE_SQL_LITERAL,			/* add quotes to make a valid SQL literal */
+	PQUOTE_SQL_IDENT,			/* quote if needed to make a SQL identifier */
+	PQUOTE_SHELL_ARG			/* quote if needed to be safe in a shell cmd */
+} PsqlScanQuoteType;
+
 /* Callback functions to be used by the lexer */
 typedef struct PsqlScanCallbacks
 {
-	/* Fetch value of a variable, as a pfree'able string; NULL if unknown */
+	/* Fetch value of a variable, as a free'able string; NULL if unknown */
 	/* This pointer can be NULL if no variable substitution is wanted */
-	char	   *(*get_variable) (const char *varname, bool escape,
-										   bool as_ident, void *passthrough);
+	char	   *(*get_variable) (const char *varname, PsqlScanQuoteType quote,
+								 void *passthrough);
 	/* Print an error message someplace appropriate */
 	/* (very old gcc versions don't support attributes on function pointers) */
 #if defined(__GNUC__) && __GNUC__ < 4
@@ -85,4 +94,4 @@ extern void psql_scan_reselect_sql_lexer(PsqlScanState state);
 
 extern bool psql_scan_in_quote(PsqlScanState state);
 
-#endif   /* PSQLSCAN_H */
+#endif							/* PSQLSCAN_H */

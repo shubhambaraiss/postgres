@@ -346,7 +346,7 @@ su - postgres
   <para>
    The <productname>PostgreSQL</> &version; sources can be obtained from the
    download section of our
-   website: <ulink url="http://www.postgresql.org/download/"></ulink>.  You
+   website: <ulink url="https://www.postgresql.org/download/"></ulink>.  You
    should get a file named <filename>postgresql-&version;.tar.gz</filename>
    or <filename>postgresql-&version;.tar.bz2</filename>. After
    you have obtained the file, unpack it:
@@ -767,6 +767,21 @@ su - postgres
       </varlistentry>
 
       <varlistentry>
+       <term><option>--with-icu</option></term>
+       <listitem>
+        <para>
+         Build with support for
+         the <productname>ICU</productname><indexterm><primary>ICU</></>
+         library.  This requires the <productname>ICU4C</productname> package
+         as well
+         as <productname>pkg-config</productname><indexterm><primary>pkg-config</></>
+         to be installed.  The minimum required version
+         of <productname>ICU4C</productname> is currently 4.6.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
        <term><option>--with-openssl</option>
        <indexterm>
         <primary>OpenSSL</primary>
@@ -1034,7 +1049,7 @@ su - postgres
          the size of each individual file in the WAL log.  It may be useful
          to adjust this size to control the granularity of WAL log shipping.
          The default size is 16 megabytes.
-         The value must be a power of 2 between 1 and 64 (megabytes).
+         The value must be a power of 2 between 1 and 1024 (megabytes).
          Note that changing this value requires an initdb.
         </para>
        </listitem>
@@ -1080,7 +1095,7 @@ su - postgres
          protocols, as well as some routines in the
          <![%standalone-include[pgcrypto]]>
          <![%standalone-ignore[<xref linkend="pgcrypto">]]>
-         module. --disable-strong-random disables functionality that
+         module. <option>--disable-strong-random</option> disables functionality that
          requires cryptographically strong random numbers, and substitutes
          a weak pseudo-random-number-generator for the generation of
          authentication salt values and query cancel keys. It may make
@@ -2011,7 +2026,7 @@ kill `cat /usr/local/pgsql/data/postmaster.pid`
    it has recently been verified to build and pass its regression tests
    on that platform.  Currently, most testing of platform compatibility
    is done automatically by test machines in the
-   <ulink url="http://buildfarm.postgresql.org/">PostgreSQL Build Farm</ulink>.
+   <ulink url="https://buildfarm.postgresql.org/">PostgreSQL Build Farm</ulink>.
    If you are interested in using <productname>PostgreSQL</> on a platform
    that is not represented in the build farm, but on which the code works
    or can be made to work, you are strongly encouraged to set up a build
@@ -2187,7 +2202,7 @@ kill `cat /usr/local/pgsql/data/postmaster.pid`
      should take care of it.
     </para>
 
-    <!-- http://archives.postgresql.org/message-id/6064jt6cfm.fsf_-_@dba2.int.libertyrms.com -->
+    <!-- https://archives.postgresql.org/message-id/6064jt6cfm.fsf_-_@dba2.int.libertyrms.com -->
 
     <para>
      One user reports:
@@ -2249,24 +2264,24 @@ hosts=local4,bind4
 
    <sect3>
     <title>Memory Management</title>
-    <!-- http://archives.postgresql.org/message-id/603bgqmpl9.fsf@dba2.int.libertyrms.com -->
+    <!-- https://archives.postgresql.org/message-id/603bgqmpl9.fsf@dba2.int.libertyrms.com -->
 
     <para>
      AIX can be somewhat peculiar with regards to the way it does
      memory management.  You can have a server with many multiples of
      gigabytes of RAM free, but still get out of memory or address
      space errors when running applications.  One example
-     is <command>createlang</command> failing with unusual errors.
+     is loading of extensions failing with unusual errors.
      For example, running as the owner of the PostgreSQL installation:
 <screen>
--bash-3.00$ createlang plperl template1
-createlang: language installation failed: ERROR:  could not load library "/opt/dbs/pgsql748/lib/plperl.so": A memory address is not in the address space for the process.
+=# CREATE EXTENSION plperl;
+ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": A memory address is not in the address space for the process.
 </screen>
     Running as a non-owner in the group possessing the PostgreSQL
     installation:
 <screen>
--bash-3.00$ createlang plperl template1
-createlang: language installation failed: ERROR:  could not load library "/opt/dbs/pgsql748/lib/plperl.so": Bad address
+=# CREATE EXTENSION plperl;
+ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": Bad address
 </screen>
      Another example is out of memory errors in the PostgreSQL server
      logs, with every memory allocation near or greater than 256 MB
@@ -2284,7 +2299,7 @@ createlang: language installation failed: ERROR:  could not load library "/opt/d
     </para>
 
     <para>
-     In the case of the <command>createlang</command> example, above,
+     In the case of the <literal>plperl</literal> example, above,
      check your umask and the permissions of the binaries in your
      PostgreSQL installation.  The binaries involved in that example
      were 32-bit and installed as mode 750 instead of 755.  Due to the

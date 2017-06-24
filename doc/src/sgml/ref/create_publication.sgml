@@ -22,15 +22,10 @@ PostgreSQL documentation
  <refsynopsisdiv>
 <synopsis>
 CREATE PUBLICATION <replaceable class="parameter">name</replaceable>
-    [ FOR TABLE <replaceable class="parameter">table_name</replaceable> [, ...]
+    [ FOR TABLE [ ONLY ] <replaceable class="parameter">table_name</replaceable> [ * ] [, ...]
       | FOR ALL TABLES ]
-    [ WITH ( <replaceable class="parameter">option</replaceable> [, ... ] ) ]
+    [ WITH ( <replaceable class="parameter">publication_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] ) ]
 
-<phrase>where <replaceable class="parameter">option</replaceable> can be:</phrase>
-
-      PUBLISH INSERT | NOPUBLISH INSERT
-    | PUBLISH UPDATE | NOPUBLISH UPDATE
-    | PUBLISH DELETE | NOPUBLISH DELETE
 </synopsis>
  </refsynopsisdiv>
 
@@ -68,7 +63,20 @@ CREATE PUBLICATION <replaceable class="parameter">name</replaceable>
     <term><literal>FOR TABLE</literal></term>
     <listitem>
      <para>
-      Specifies a list of tables to add to the publication.
+      Specifies a list of tables to add to the publication.  If
+      <literal>ONLY</> is specified before the table name, only
+      that table is added to the publication.  If <literal>ONLY</> is not
+      specified, the table and all its descendant tables (if any) are added.
+      Optionally, <literal>*</> can be specified after the table name to
+      explicitly indicate that descendant tables are included.
+     </para>
+
+     <para>
+      Only persistent base tables can be part of a publication.  Temporary
+      tables, unlogged tables, foreign tables, materialized views, regular
+      views, and partitioned tables cannot be part of a publication.  To
+      replicate a partitioned table, add the individual partitions to the
+      publication.
      </para>
     </listitem>
    </varlistentry>
@@ -84,37 +92,29 @@ CREATE PUBLICATION <replaceable class="parameter">name</replaceable>
    </varlistentry>
 
    <varlistentry>
-    <term><literal>PUBLISH INSERT</literal></term>
-    <term><literal>NOPUBLISH INSERT</literal></term>
+    <term><literal>WITH ( <replaceable class="parameter">publication_parameter</replaceable> [= <replaceable class="parameter">value</replaceable>] [, ... ] )</literal></term>
     <listitem>
      <para>
-      These clauses determine whether the new publication will send
-      the <command>INSERT</command> operations to the subscribers.
-      <literal>PUBLISH INSERT</literal> is the default.
-     </para>
-    </listitem>
-   </varlistentry>
+      This clause specifies optional parameters for a publication.  The
+      following parameters are supported:
 
-   <varlistentry>
-    <term><literal>PUBLISH UPDATE</literal></term>
-    <term><literal>NOPUBLISH UPDATE</literal></term>
-    <listitem>
-     <para>
-      These clauses determine whether the new publication will send
-      the <command>UPDATE</command> operations to the subscribers.
-      <literal>PUBLISH UPDATE</literal> is the default.
-     </para>
-    </listitem>
-   </varlistentry>
+      <variablelist>
+       <varlistentry>
+        <term><literal>publish</literal> (<type>string</type>)</term>
+        <listitem>
+         <para>
+          This parameter determines which DML operations will be published by
+          the new publication to the subscribers.  The value is
+          comma-separated list of operations.  The allowed operations are
+          <literal>insert</literal>, <literal>update</literal>, and
+          <literal>delete</literal>.  The default is to publish all actions,
+          and so the default value for this option is
+          <literal>'insert, update, delete'</literal>.
+         </para>
+        </listitem>
+       </varlistentry>
+      </variablelist>
 
-   <varlistentry>
-    <term><literal>PUBLISH DELETE</literal></term>
-    <term><literal>NOPUBLISH DELETE</literal></term>
-    <listitem>
-     <para>
-      These clauses determine whether the new publication will send
-      the <command>DELETE</command> operations to the subscribers.
-      <literal>PUBLISH DELETE</literal> is the default.
      </para>
     </listitem>
    </varlistentry>
@@ -143,9 +143,9 @@ CREATE PUBLICATION <replaceable class="parameter">name</replaceable>
   </para>
 
   <para>
-   To add a table to a publication, the invoking user must have
-   <command>SELECT</command> privilege on given table.  The
-   <command>FOR ALL TABLES</command> clause requires superuser.
+   To add a table to a publication, the invoking user must have ownership
+   rights on the table.  The <command>FOR ALL TABLES</command> clause requires
+   the invoking user to be a superuser.
   </para>
 
   <para>
@@ -163,7 +163,12 @@ CREATE PUBLICATION <replaceable class="parameter">name</replaceable>
   </para>
 
   <para>
-   <command>TRUNCATE</command> and other <acronym>DDL</acronym> operations
+   <command>COPY ... FROM</command> commands are published
+   as <command>INSERT</command> operations.
+  </para>
+
+  <para>
+   <command>TRUNCATE</command> and <acronym>DDL</acronym> operations
    are not published.
   </para>
  </refsect1>
@@ -172,18 +177,26 @@ CREATE PUBLICATION <replaceable class="parameter">name</replaceable>
   <title>Examples</title>
 
   <para>
-   Create a simple publication that just publishes all DML for tables in it:
+   Create a publication that publishes all changes in two tables:
 <programlisting>
-CREATE PUBLICATION mypublication;
+CREATE PUBLICATION mypublication FOR TABLE users, departments;
 </programlisting>
   </para>
 
   <para>
-   Create an insert-only publication:
+   Create a publication that publishes all changes in all tables:
 <programlisting>
-CREATE PUBLICATION insert_only WITH (NOPUBLISH UPDATE, NOPUBLISH DELETE);
+CREATE PUBLICATION alltables FOR ALL TABLES;
 </programlisting>
   </para>
+
+  <para>
+   Create a publication that only publishes <command>INSERT</command>
+   operations in one table:
+<programlisting>
+CREATE PUBLICATION insert_only FOR TABLE mydata
+    WITH (publish = 'insert');
+</programlisting></para>
  </refsect1>
 
  <refsect1>

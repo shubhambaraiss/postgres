@@ -28,7 +28,7 @@
 
 static void logicalrep_write_attrs(StringInfo out, Relation rel);
 static void logicalrep_write_tuple(StringInfo out, Relation rel,
-								   HeapTuple tuple);
+					   HeapTuple tuple);
 
 static void logicalrep_read_attrs(StringInfo in, LogicalRepRelation *rel);
 static void logicalrep_read_tuple(StringInfo in, LogicalRepTupleData *tuple);
@@ -72,7 +72,7 @@ void
 logicalrep_write_commit(StringInfo out, ReorderBufferTXN *txn,
 						XLogRecPtr commit_lsn)
 {
-	uint8 flags = 0;
+	uint8		flags = 0;
 
 	pq_sendbyte(out, 'C');		/* sending COMMIT */
 
@@ -92,10 +92,10 @@ void
 logicalrep_read_commit(StringInfo in, LogicalRepCommitData *commit_data)
 {
 	/* read flags (unused for now) */
-	uint8   flags = pq_getmsgbyte(in);
+	uint8		flags = pq_getmsgbyte(in);
 
 	if (flags != 0)
-		elog(ERROR, "unknown flags %u in commit message", flags);
+		elog(ERROR, "unrecognized flags %u in commit message", flags);
 
 	/* read fields */
 	commit_data->commit_lsn = pq_getmsgint64(in);
@@ -136,7 +136,7 @@ logicalrep_read_origin(StringInfo in, XLogRecPtr *origin_lsn)
  * Write INSERT to the output stream.
  */
 void
-logicalrep_write_insert(StringInfo out,	Relation rel, HeapTuple newtuple)
+logicalrep_write_insert(StringInfo out, Relation rel, HeapTuple newtuple)
 {
 	pq_sendbyte(out, 'I');		/* action INSERT */
 
@@ -160,7 +160,7 @@ LogicalRepRelId
 logicalrep_read_insert(StringInfo in, LogicalRepTupleData *newtup)
 {
 	char		action;
-	LogicalRepRelId		relid;
+	LogicalRepRelId relid;
 
 	/* read the relation id */
 	relid = pq_getmsgint(in, 4);
@@ -180,7 +180,7 @@ logicalrep_read_insert(StringInfo in, LogicalRepTupleData *newtup)
  */
 void
 logicalrep_write_update(StringInfo out, Relation rel, HeapTuple oldtuple,
-					   HeapTuple newtuple)
+						HeapTuple newtuple)
 {
 	pq_sendbyte(out, 'U');		/* action UPDATE */
 
@@ -213,7 +213,7 @@ logicalrep_read_update(StringInfo in, bool *has_oldtuple,
 					   LogicalRepTupleData *newtup)
 {
 	char		action;
-	LogicalRepRelId		relid;
+	LogicalRepRelId relid;
 
 	/* read the relation id */
 	relid = pq_getmsgint(in, 4);
@@ -277,7 +277,7 @@ LogicalRepRelId
 logicalrep_read_delete(StringInfo in, LogicalRepTupleData *oldtup)
 {
 	char		action;
-	LogicalRepRelId		relid;
+	LogicalRepRelId relid;
 
 	/* read the relation id */
 	relid = pq_getmsgint(in, 4);
@@ -323,7 +323,7 @@ logicalrep_write_rel(StringInfo out, Relation rel)
 LogicalRepRelation *
 logicalrep_read_rel(StringInfo in)
 {
-	LogicalRepRelation	*rel = palloc(sizeof(LogicalRepRelation));
+	LogicalRepRelation *rel = palloc(sizeof(LogicalRepRelation));
 
 	rel->remoteid = pq_getmsgint(in, 4);
 
@@ -377,7 +377,7 @@ logicalrep_read_typ(StringInfo in, LogicalRepTyp *ltyp)
 {
 	ltyp->remoteid = pq_getmsgint(in, 4);
 
-	/* Read tupe name from stream */
+	/* Read type name from stream */
 	ltyp->nspname = pstrdup(logicalrep_read_namespace(in));
 	ltyp->typname = pstrdup(pq_getmsgstring(in));
 }
@@ -417,7 +417,6 @@ logicalrep_write_tuple(StringInfo out, Relation rel, HeapTuple tuple)
 		Form_pg_type typclass;
 		Form_pg_attribute att = desc->attrs[i];
 		char	   *outputstr;
-		int			len;
 
 		/* skip dropped columns */
 		if (att->attisdropped)
@@ -442,10 +441,7 @@ logicalrep_write_tuple(StringInfo out, Relation rel, HeapTuple tuple)
 		pq_sendbyte(out, 't');	/* 'text' data follows */
 
 		outputstr = OidOutputFunctionCall(typclass->typoutput, values[i]);
-		len = strlen(outputstr) + 1;	/* null terminated */
-		pq_sendint(out, len, 4);		/* length */
-		pq_sendstring(out, outputstr);	/* data */
-
+		pq_sendcountedtext(out, outputstr, strlen(outputstr), false);
 		pfree(outputstr);
 
 		ReleaseSysCache(typtup);
@@ -463,7 +459,7 @@ logicalrep_read_tuple(StringInfo in, LogicalRepTupleData *tuple)
 	int			i;
 	int			natts;
 
-	/* Get of attributes. */
+	/* Get number of attributes */
 	natts = pq_getmsgint(in, 2);
 
 	memset(tuple->changed, 0, sizeof(tuple->changed));
@@ -472,31 +468,35 @@ logicalrep_read_tuple(StringInfo in, LogicalRepTupleData *tuple)
 	for (i = 0; i < natts; i++)
 	{
 		char		kind;
-		int			len;
 
 		kind = pq_getmsgbyte(in);
 
 		switch (kind)
 		{
-			case 'n': /* null */
+			case 'n':			/* null */
 				tuple->values[i] = NULL;
 				tuple->changed[i] = true;
 				break;
-			case 'u': /* unchanged column */
-				tuple->values[i] = (char *) 0xdeadbeef; /* make bad usage more obvious */
+			case 'u':			/* unchanged column */
+				/* we don't receive the value of an unchanged column */
+				tuple->values[i] = NULL;
 				break;
-			case 't': /* text formatted value */
+			case 't':			/* text formatted value */
 				{
+					int			len;
+
 					tuple->changed[i] = true;
 
-					len = pq_getmsgint(in, 4); /* read length */
+					len = pq_getmsgint(in, 4);	/* read length */
 
 					/* and data */
-					tuple->values[i] = (char *) pq_getmsgbytes(in, len);
+					tuple->values[i] = palloc(len + 1);
+					pq_copymsgbytes(in, tuple->values[i], len);
+					tuple->values[i][len] = '\0';
 				}
 				break;
 			default:
-				elog(ERROR, "unknown data representation type '%c'", kind);
+				elog(ERROR, "unrecognized data representation type '%c'", kind);
 		}
 	}
 }
@@ -534,7 +534,7 @@ logicalrep_write_attrs(StringInfo out, Relation rel)
 	for (i = 0; i < desc->natts; i++)
 	{
 		Form_pg_attribute att = desc->attrs[i];
-		uint8			flags = 0;
+		uint8		flags = 0;
 
 		if (att->attisdropped)
 			continue;
@@ -612,7 +612,7 @@ logicalrep_write_namespace(StringInfo out, Oid nspid)
 		pq_sendbyte(out, '\0');
 	else
 	{
-		char *nspname = get_namespace_name(nspid);
+		char	   *nspname = get_namespace_name(nspid);
 
 		if (nspname == NULL)
 			elog(ERROR, "cache lookup failed for namespace %u",

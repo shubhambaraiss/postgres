@@ -120,7 +120,7 @@ InitScanRelation(SampleScanState *node, EState *estate, int eflags)
 	 * open that relation and acquire appropriate lock on it.
 	 */
 	currentRelation = ExecOpenScanRelation(estate,
-						   ((SampleScan *) node->ss.ps.plan)->scan.scanrelid,
+										   ((SampleScan *) node->ss.ps.plan)->scan.scanrelid,
 										   eflags);
 
 	node->ss.ss_currentRelation = currentRelation;
@@ -164,19 +164,12 @@ ExecInitSampleScan(SampleScan *node, EState *estate, int eflags)
 	/*
 	 * initialize child expressions
 	 */
-	scanstate->ss.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.targetlist,
-					 (PlanState *) scanstate);
-	scanstate->ss.ps.qual = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.qual,
-					 (PlanState *) scanstate);
+	scanstate->ss.ps.qual =
+		ExecInitQual(node->scan.plan.qual, (PlanState *) scanstate);
 
-	scanstate->args = (List *)
-		ExecInitExpr((Expr *) tsc->args,
-					 (PlanState *) scanstate);
+	scanstate->args = ExecInitExprList(tsc->args, (PlanState *) scanstate);
 	scanstate->repeatable =
-		ExecInitExpr(tsc->repeatable,
-					 (PlanState *) scanstate);
+		ExecInitExpr(tsc->repeatable, (PlanState *) scanstate);
 
 	/*
 	 * tuple table initialization
@@ -314,7 +307,7 @@ tablesample_init(SampleScanState *scanstate)
 		if (isnull)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TABLESAMPLE_REPEAT),
-				 errmsg("TABLESAMPLE REPEATABLE parameter cannot be null")));
+					 errmsg("TABLESAMPLE REPEATABLE parameter cannot be null")));
 
 		/*
 		 * The REPEATABLE parameter has been coerced to float8 by the parser.
@@ -422,7 +415,7 @@ tablesample_getnext(SampleScanState *scanstate)
 	else
 	{
 		/* continue from previously returned page/tuple */
-		blockno = scan->rs_cblock;		/* current page */
+		blockno = scan->rs_cblock;	/* current page */
 	}
 
 	/*

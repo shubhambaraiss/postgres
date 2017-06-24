@@ -49,6 +49,9 @@ typedef Datum (*PGFunction) (FunctionCallInfo fcinfo);
  * arguments, rather than about the function itself.  But it's convenient
  * to store it here rather than in FunctionCallInfoData, where it might more
  * logically belong.
+ *
+ * fn_extra is available for use by the called function; all other fields
+ * should be treated as read-only after the struct is created.
  */
 typedef struct FmgrInfo
 {
@@ -65,6 +68,11 @@ typedef struct FmgrInfo
 
 /*
  * This struct is the data actually passed to an fmgr-called function.
+ *
+ * The called function is expected to set isnull, and possibly resultinfo or
+ * fields in whatever resultinfo points to.  It should not change any other
+ * fields.  (In particular, scribbling on the argument arrays is a bad idea,
+ * since some callers assume they can re-call with the same arguments.)
  */
 typedef struct FunctionCallInfoData
 {
@@ -74,7 +82,7 @@ typedef struct FunctionCallInfoData
 	Oid			fncollation;	/* collation for function to use */
 	bool		isnull;			/* function must set true if result is NULL */
 	short		nargs;			/* # arguments actually passed */
-	Datum		arg[FUNC_MAX_ARGS];		/* Arguments passed to function */
+	Datum		arg[FUNC_MAX_ARGS]; /* Arguments passed to function */
 	bool		argnull[FUNC_MAX_ARGS]; /* T if arg[i] is actually NULL */
 } FunctionCallInfoData;
 
@@ -188,11 +196,11 @@ extern void fmgr_info_copy(FmgrInfo *dstinfo, FmgrInfo *srcinfo,
  * Note: it'd be nice if these could be macros, but I see no way to do that
  * without evaluating the arguments multiple times, which is NOT acceptable.
  */
-extern struct varlena *pg_detoast_datum(struct varlena * datum);
-extern struct varlena *pg_detoast_datum_copy(struct varlena * datum);
-extern struct varlena *pg_detoast_datum_slice(struct varlena * datum,
+extern struct varlena *pg_detoast_datum(struct varlena *datum);
+extern struct varlena *pg_detoast_datum_copy(struct varlena *datum);
+extern struct varlena *pg_detoast_datum_slice(struct varlena *datum,
 					   int32 first, int32 count);
-extern struct varlena *pg_detoast_datum_packed(struct varlena * datum);
+extern struct varlena *pg_detoast_datum_packed(struct varlena *datum);
 
 #define PG_DETOAST_DATUM(datum) \
 	pg_detoast_datum((struct varlena *) DatumGetPointer(datum))
@@ -328,10 +336,10 @@ extern struct varlena *pg_detoast_datum_packed(struct varlena * datum);
 /*-------------------------------------------------------------------------
  *		Support for detecting call convention of dynamically-loaded functions
  *
- * Dynamically loaded functions may use either the version-1 ("new style")
- * or version-0 ("old style") calling convention.  Version 1 is the call
- * convention defined in this header file; version 0 is the old "plain C"
- * convention.  A version-1 function must be accompanied by the macro call
+ * Dynamically loaded functions currently can only use the version-1 ("new
+ * style") calling convention.  Version-0 ("old style") is not supported
+ * anymore.  Version 1 is the call convention defined in this header file, and
+ * must be accompanied by the macro call
  *
  *		PG_FUNCTION_INFO_V1(function_name);
  *
@@ -482,6 +490,19 @@ extern Datum DirectFunctionCall9Coll(PGFunction func, Oid collation,
 						Datum arg3, Datum arg4, Datum arg5,
 						Datum arg6, Datum arg7, Datum arg8,
 						Datum arg9);
+
+/*
+ * These functions work like the DirectFunctionCall functions except that
+ * they use the flinfo parameter to initialise the fcinfo for the call.
+ * It's recommended that the callee only use the fn_extra and fn_mcxt
+ * fields, as other fields will typically describe the calling function
+ * not the callee.  Conversely, the calling function should not have
+ * used fn_extra, unless its use is known to be compatible with the callee's.
+ */
+extern Datum CallerFInfoFunctionCall1(PGFunction func, FmgrInfo *flinfo,
+						 Oid collation, Datum arg1);
+extern Datum CallerFInfoFunctionCall2(PGFunction func, FmgrInfo *flinfo,
+						 Oid collation, Datum arg1, Datum arg2);
 
 /* These are for invocation of a previously-looked-up function with a
  * directly-computed parameter list.  Note that neither arguments nor result
@@ -636,7 +657,7 @@ extern bytea *OidSendFunctionCall(Oid functionId, Datum val);
 /*
  * Routines in fmgr.c
  */
-extern const Pg_finfo_record *fetch_finfo_record(void *filehandle, char *funcname);
+extern const Pg_finfo_record *fetch_finfo_record(void *filehandle, const char *funcname);
 extern void clear_external_function_hash(void *filehandle);
 extern Oid	fmgr_internal_function(const char *proname);
 extern Oid	get_fn_expr_rettype(FmgrInfo *flinfo);
@@ -652,9 +673,9 @@ extern bool CheckFunctionValidatorAccess(Oid validatorOid, Oid functionOid);
  */
 extern char *Dynamic_library_path;
 
-extern PGFunction load_external_function(char *filename, char *funcname,
+extern PGFunction load_external_function(const char *filename, const char *funcname,
 					   bool signalNotFound, void **filehandle);
-extern PGFunction lookup_external_function(void *filehandle, char *funcname);
+extern PGFunction lookup_external_function(void *filehandle, const char *funcname);
 extern void load_file(const char *filename, bool restricted);
 extern void **find_rendezvous_variable(const char *varName);
 extern Size EstimateLibraryStateSpace(void);
@@ -669,8 +690,8 @@ extern void RestoreLibraryState(char *start_address);
  */
 
 /* AggCheckCallContext can return one of the following codes, or 0: */
-#define AGG_CONTEXT_AGGREGATE	1		/* regular aggregate */
-#define AGG_CONTEXT_WINDOW		2		/* window function */
+#define AGG_CONTEXT_AGGREGATE	1	/* regular aggregate */
+#define AGG_CONTEXT_WINDOW		2	/* window function */
 
 extern int AggCheckCallContext(FunctionCallInfo fcinfo,
 					MemoryContext *aggcontext);
@@ -699,7 +720,7 @@ typedef enum FmgrHookEventType
 typedef bool (*needs_fmgr_hook_type) (Oid fn_oid);
 
 typedef void (*fmgr_hook_type) (FmgrHookEventType event,
-											FmgrInfo *flinfo, Datum *arg);
+								FmgrInfo *flinfo, Datum *arg);
 
 extern PGDLLIMPORT needs_fmgr_hook_type needs_fmgr_hook;
 extern PGDLLIMPORT fmgr_hook_type fmgr_hook;
@@ -722,4 +743,4 @@ extern PGDLLIMPORT fmgr_hook_type fmgr_hook;
  */
 extern char *fmgr(Oid procedureId,...);
 
-#endif   /* FMGR_H */
+#endif							/* FMGR_H */

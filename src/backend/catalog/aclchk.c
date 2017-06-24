@@ -48,6 +48,7 @@
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_type.h"
@@ -156,7 +157,7 @@ dumpacl(Acl *acl)
 			 DatumGetCString(DirectFunctionCall1(aclitemout,
 												 PointerGetDatum(aip + i))));
 }
-#endif   /* ACLDEBUG */
+#endif							/* ACLDEBUG */
 
 
 /*
@@ -211,8 +212,8 @@ merge_acl_with_grant(Acl *old_acl, bool is_grant,
 		 * option, while REVOKE GRANT OPTION revokes only the option.
 		 */
 		ACLITEM_SET_PRIVS_GOPTIONS(aclitem,
-					(is_grant || !grant_option) ? privileges : ACL_NO_RIGHTS,
-				   (!is_grant || grant_option) ? privileges : ACL_NO_RIGHTS);
+								   (is_grant || !grant_option) ? privileges : ACL_NO_RIGHTS,
+								   (!is_grant || grant_option) ? privileges : ACL_NO_RIGHTS);
 
 		newer_acl = aclupdate(new_acl, &aclitem, modechg, ownerId, behavior);
 
@@ -369,8 +370,8 @@ restrict_and_check_grant(bool is_grant, AclMode avail_goptions, bool all_privs,
 			else
 				ereport(WARNING,
 						(errcode(ERRCODE_WARNING_PRIVILEGE_NOT_REVOKED),
-					 errmsg("not all privileges could be revoked for \"%s\"",
-							objname)));
+						 errmsg("not all privileges could be revoked for \"%s\"",
+								objname)));
 		}
 	}
 
@@ -958,6 +959,10 @@ ExecAlterDefaultPrivilegesStmt(ParseState *pstate, AlterDefaultPrivilegesStmt *s
 			all_privileges = ACL_ALL_RIGHTS_TYPE;
 			errormsg = gettext_noop("invalid privilege type %s for type");
 			break;
+		case ACL_OBJECT_NAMESPACE:
+			all_privileges = ACL_ALL_RIGHTS_NAMESPACE;
+			errormsg = gettext_noop("invalid privilege type %s for schema");
+			break;
 		default:
 			elog(ERROR, "unrecognized GrantStmt.objtype: %d",
 				 (int) action->objtype);
@@ -989,7 +994,7 @@ ExecAlterDefaultPrivilegesStmt(ParseState *pstate, AlterDefaultPrivilegesStmt *s
 			if (privnode->cols)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_GRANT_OPERATION),
-					errmsg("default privileges cannot be set for columns")));
+						 errmsg("default privileges cannot be set for columns")));
 
 			if (privnode->priv_name == NULL)	/* parser mistake? */
 				elog(ERROR, "AccessPriv node must specify privilege");
@@ -1143,6 +1148,16 @@ SetDefaultACL(InternalDefaultACL *iacls)
 			objtype = DEFACLOBJ_TYPE;
 			if (iacls->all_privs && this_privileges == ACL_NO_RIGHTS)
 				this_privileges = ACL_ALL_RIGHTS_TYPE;
+			break;
+
+		case ACL_OBJECT_NAMESPACE:
+			if (OidIsValid(iacls->nspid))
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_GRANT_OPERATION),
+						 errmsg("cannot use IN SCHEMA clause when using GRANT/REVOKE ON SCHEMAS")));
+			objtype = DEFACLOBJ_NAMESPACE;
+			if (iacls->all_privs && this_privileges == ACL_NO_RIGHTS)
+				this_privileges = ACL_ALL_RIGHTS_NAMESPACE;
 			break;
 
 		default:
@@ -1367,6 +1382,9 @@ RemoveRoleFromObjectACL(Oid roleid, Oid classid, Oid objid)
 				break;
 			case DEFACLOBJ_TYPE:
 				iacls.objtype = ACL_OBJECT_TYPE;
+				break;
+			case DEFACLOBJ_NAMESPACE:
+				iacls.objtype = ACL_OBJECT_NAMESPACE;
 				break;
 			default:
 				/* Shouldn't get here */
@@ -2365,7 +2383,7 @@ ExecGrant_ForeignServer(InternalGrant *istmt)
 		this_privileges =
 			restrict_and_check_grant(istmt->is_grant, avail_goptions,
 									 istmt->all_privs, istmt->privileges,
-								   srvid, grantorId, ACL_KIND_FOREIGN_SERVER,
+									 srvid, grantorId, ACL_KIND_FOREIGN_SERVER,
 									 NameStr(pg_server_tuple->srvname),
 									 0, NULL);
 
@@ -2585,7 +2603,7 @@ ExecGrant_Language(InternalGrant *istmt)
 					 errmsg("language \"%s\" is not trusted",
 							NameStr(pg_language_tuple->lanname)),
 					 errdetail("GRANT and REVOKE are not allowed on untrusted languages, "
-				   "because only superusers can use untrusted languages.")));
+							   "because only superusers can use untrusted languages.")));
 
 		/*
 		 * Get owner ID and working copy of existing ACL. If there's no ACL,
@@ -2720,7 +2738,7 @@ ExecGrant_Largeobject(InternalGrant *istmt)
 
 		tuple = systable_getnext(scan);
 		if (!HeapTupleIsValid(tuple))
-			elog(ERROR, "cache lookup failed for large object %u", loid);
+			elog(ERROR, "could not find tuple for large object %u", loid);
 
 		form_lo_meta = (Form_pg_largeobject_metadata) GETSTRUCT(tuple);
 
@@ -3099,7 +3117,7 @@ ExecGrant_Type(InternalGrant *istmt)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_GRANT_OPERATION),
 					 errmsg("cannot set privileges of array types"),
-				errhint("Set the privileges of the element type instead.")));
+					 errhint("Set the privileges of the element type instead.")));
 
 		/* Used GRANT DOMAIN on a non-domain? */
 		if (istmt->objtype == ACL_OBJECT_DOMAIN &&
@@ -3302,6 +3320,8 @@ static const char *const no_priv_msg[MAX_ACL_KIND] =
 	gettext_noop("permission denied for collation %s"),
 	/* ACL_KIND_CONVERSION */
 	gettext_noop("permission denied for conversion %s"),
+	/* ACL_KIND_STATISTICS */
+	gettext_noop("permission denied for statistics object %s"),
 	/* ACL_KIND_TABLESPACE */
 	gettext_noop("permission denied for tablespace %s"),
 	/* ACL_KIND_TSDICTIONARY */
@@ -3352,6 +3372,8 @@ static const char *const not_owner_msg[MAX_ACL_KIND] =
 	gettext_noop("must be owner of collation %s"),
 	/* ACL_KIND_CONVERSION */
 	gettext_noop("must be owner of conversion %s"),
+	/* ACL_KIND_STATISTICS */
+	gettext_noop("must be owner of statistics object %s"),
 	/* ACL_KIND_TABLESPACE */
 	gettext_noop("must be owner of tablespace %s"),
 	/* ACL_KIND_TSDICTIONARY */
@@ -3411,8 +3433,8 @@ aclcheck_error_col(AclResult aclerr, AclObjectKind objectkind,
 		case ACLCHECK_NO_PRIV:
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			 errmsg("permission denied for column \"%s\" of relation \"%s\"",
-					colname, objectname)));
+					 errmsg("permission denied for column \"%s\" of relation \"%s\"",
+							colname, objectname)));
 			break;
 		case ACLCHECK_NOT_OWNER:
 			/* relation msg is OK since columns don't have separate owners */
@@ -3467,6 +3489,10 @@ pg_aclmask(AclObjectKind objkind, Oid table_oid, AttrNumber attnum, Oid roleid,
 												   mask, how, NULL);
 		case ACL_KIND_NAMESPACE:
 			return pg_namespace_aclmask(table_oid, roleid, mask, how);
+		case ACL_KIND_STATISTICS:
+			elog(ERROR, "grantable rights not supported for statistics objects");
+			/* not reached, but keep compiler quiet */
+			return ACL_NO_RIGHTS;
 		case ACL_KIND_TABLESPACE:
 			return pg_tablespace_aclmask(table_oid, roleid, mask, how);
 		case ACL_KIND_FDW:
@@ -4840,8 +4866,8 @@ pg_ts_config_ownercheck(Oid cfg_oid, Oid roleid)
 	if (!HeapTupleIsValid(tuple))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
-			   errmsg("text search configuration with OID %u does not exist",
-					  cfg_oid)));
+				 errmsg("text search configuration with OID %u does not exist",
+						cfg_oid)));
 
 	ownerId = ((Form_pg_ts_config) GETSTRUCT(tuple))->cfgowner;
 
@@ -5078,7 +5104,7 @@ pg_publication_ownercheck(Oid pub_oid, Oid roleid)
 }
 
 /*
- * Ownership check for an subscription (specified by OID).
+ * Ownership check for a subscription (specified by OID).
  */
 bool
 pg_subscription_ownercheck(Oid sub_oid, Oid roleid)
@@ -5097,6 +5123,33 @@ pg_subscription_ownercheck(Oid sub_oid, Oid roleid)
 				 errmsg("subscription with OID %u does not exist", sub_oid)));
 
 	ownerId = ((Form_pg_subscription) GETSTRUCT(tuple))->subowner;
+
+	ReleaseSysCache(tuple);
+
+	return has_privs_of_role(roleid, ownerId);
+}
+
+/*
+ * Ownership check for a statistics object (specified by OID).
+ */
+bool
+pg_statistics_object_ownercheck(Oid stat_oid, Oid roleid)
+{
+	HeapTuple	tuple;
+	Oid			ownerId;
+
+	/* Superusers bypass all permission checking. */
+	if (superuser_arg(roleid))
+		return true;
+
+	tuple = SearchSysCache1(STATEXTOID, ObjectIdGetDatum(stat_oid));
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("statistics object with OID %u does not exist",
+						stat_oid)));
+
+	ownerId = ((Form_pg_statistic_ext) GETSTRUCT(tuple))->stxowner;
 
 	ReleaseSysCache(tuple);
 
@@ -5222,6 +5275,10 @@ get_user_default_acl(GrantObjectType objtype, Oid ownerId, Oid nsp_oid)
 
 		case ACL_OBJECT_TYPE:
 			defaclobjtype = DEFACLOBJ_TYPE;
+			break;
+
+		case ACL_OBJECT_NAMESPACE:
+			defaclobjtype = DEFACLOBJ_NAMESPACE;
 			break;
 
 		default:
@@ -5446,7 +5503,7 @@ recordExtObjInitPriv(Oid objoid, Oid classoid)
 
 		tuple = systable_getnext(scan);
 		if (!HeapTupleIsValid(tuple))
-			elog(ERROR, "cache lookup failed for large object %u", objoid);
+			elog(ERROR, "could not find tuple for large object %u", objoid);
 
 		aclDatum = heap_getattr(tuple,
 								Anum_pg_largeobject_metadata_lomacl,

@@ -101,7 +101,7 @@ ForeignRecheck(ForeignScanState *node, TupleTableSlot *slot)
 		!fdwroutine->RecheckForeignScan(node, slot))
 		return false;
 
-	return ExecQual(node->fdw_recheck_quals, econtext, false);
+	return ExecQual(node->fdw_recheck_quals, econtext);
 }
 
 /* ----------------------------------------------------------------
@@ -155,15 +155,10 @@ ExecInitForeignScan(ForeignScan *node, EState *estate, int eflags)
 	/*
 	 * initialize child expressions
 	 */
-	scanstate->ss.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.targetlist,
-					 (PlanState *) scanstate);
-	scanstate->ss.ps.qual = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.qual,
-					 (PlanState *) scanstate);
-	scanstate->fdw_recheck_quals = (List *)
-		ExecInitExpr((Expr *) node->fdw_recheck_quals,
-					 (PlanState *) scanstate);
+	scanstate->ss.ps.qual =
+		ExecInitQual(node->scan.plan.qual, (PlanState *) scanstate);
+	scanstate->fdw_recheck_quals =
+		ExecInitQual(node->fdw_recheck_quals, (PlanState *) scanstate);
 
 	/*
 	 * tuple table initialization
@@ -349,7 +344,7 @@ ExecForeignScanInitializeWorker(ForeignScanState *node, shm_toc *toc)
 		int			plan_node_id = node->ss.ps.plan->plan_node_id;
 		void	   *coordinate;
 
-		coordinate = shm_toc_lookup(toc, plan_node_id);
+		coordinate = shm_toc_lookup(toc, plan_node_id, false);
 		fdwroutine->InitializeWorkerForeignScan(node, toc, coordinate);
 	}
 }

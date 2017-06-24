@@ -42,6 +42,7 @@ extern void appendByteaLiteral(PQExpBuffer buf,
 				   bool std_strings);
 
 extern void appendShellString(PQExpBuffer buf, const char *str);
+extern bool appendShellStringNoError(PQExpBuffer buf, const char *str);
 extern void appendConnStrVal(PQExpBuffer buf, const char *str);
 extern void appendPsqlMetaConnect(PQExpBuffer buf, const char *dbname);
 
@@ -56,4 +57,4 @@ extern bool processSQLNamePattern(PGconn *conn, PQExpBuffer buf,
 					  const char *schemavar, const char *namevar,
 					  const char *altnamevar, const char *visibilityrule);
 
-#endif   /* STRING_UTILS_H */
+#endif							/* STRING_UTILS_H */

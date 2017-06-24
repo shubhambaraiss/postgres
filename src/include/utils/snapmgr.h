@@ -85,7 +85,7 @@ extern void UnregisterSnapshotFromOwner(Snapshot snapshot, ResourceOwner owner);
 
 extern void AtSubCommit_Snapshot(int level);
 extern void AtSubAbort_Snapshot(int level);
-extern void AtEOXact_Snapshot(bool isCommit);
+extern void AtEOXact_Snapshot(bool isCommit, bool resetXmin);
 
 extern void ImportSnapshot(const char *idstr);
 extern bool XactHasExportedSnapshots(void);
@@ -110,4 +110,4 @@ extern void SerializeSnapshot(Snapshot snapshot, char *start_address);
 extern Snapshot RestoreSnapshot(char *start_address);
 extern void RestoreTransactionSnapshot(Snapshot snapshot, void *master_pgproc);
 
-#endif   /* SNAPMGR_H */
+#endif							/* SNAPMGR_H */

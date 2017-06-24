@@ -69,13 +69,13 @@ typedef struct toast_compress_header
 
 static void toast_delete_datum(Relation rel, Datum value, bool is_speculative);
 static Datum toast_save_datum(Relation rel, Datum value,
-				 struct varlena * oldexternal, int options);
+				 struct varlena *oldexternal, int options);
 static bool toastrel_valueid_exists(Relation toastrel, Oid valueid);
 static bool toastid_valueid_exists(Oid toastrelid, Oid valueid);
-static struct varlena *toast_fetch_datum(struct varlena * attr);
-static struct varlena *toast_fetch_datum_slice(struct varlena * attr,
+static struct varlena *toast_fetch_datum(struct varlena *attr);
+static struct varlena *toast_fetch_datum_slice(struct varlena *attr,
 						int32 sliceoffset, int32 length);
-static struct varlena *toast_decompress_datum(struct varlena * attr);
+static struct varlena *toast_decompress_datum(struct varlena *attr);
 static int toast_open_indexes(Relation toastrel,
 				   LOCKMODE lock,
 				   Relation **toastidxs,
@@ -98,7 +98,7 @@ static void init_toast_snapshot(Snapshot toast_snapshot);
  * ----------
  */
 struct varlena *
-heap_tuple_fetch_attr(struct varlena * attr)
+heap_tuple_fetch_attr(struct varlena *attr)
 {
 	struct varlena *result;
 
@@ -169,7 +169,7 @@ heap_tuple_fetch_attr(struct varlena * attr)
  * ----------
  */
 struct varlena *
-heap_tuple_untoast_attr(struct varlena * attr)
+heap_tuple_untoast_attr(struct varlena *attr)
 {
 	if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{
@@ -255,7 +255,7 @@ heap_tuple_untoast_attr(struct varlena * attr)
  * ----------
  */
 struct varlena *
-heap_tuple_untoast_attr_slice(struct varlena * attr,
+heap_tuple_untoast_attr_slice(struct varlena *attr,
 							  int32 sliceoffset, int32 slicelength)
 {
 	struct varlena *preslice;
@@ -1289,6 +1289,74 @@ toast_flatten_tuple_to_datum(HeapTupleHeader tup,
 
 
 /* ----------
+ * toast_build_flattened_tuple -
+ *
+ *	Build a tuple containing no out-of-line toasted fields.
+ *	(This does not eliminate compressed or short-header datums.)
+ *
+ *	This is essentially just like heap_form_tuple, except that it will
+ *	expand any external-data pointers beforehand.
+ *
+ *	It's not very clear whether it would be preferable to decompress
+ *	in-line compressed datums while at it.  For now, we don't.
+ * ----------
+ */
+HeapTuple
+toast_build_flattened_tuple(TupleDesc tupleDesc,
+							Datum *values,
+							bool *isnull)
+{
+	HeapTuple	new_tuple;
+	Form_pg_attribute *att = tupleDesc->attrs;
+	int			numAttrs = tupleDesc->natts;
+	int			num_to_free;
+	int			i;
+	Datum		new_values[MaxTupleAttributeNumber];
+	Pointer		freeable_values[MaxTupleAttributeNumber];
+
+	/*
+	 * We can pass the caller's isnull array directly to heap_form_tuple, but
+	 * we potentially need to modify the values array.
+	 */
+	Assert(numAttrs <= MaxTupleAttributeNumber);
+	memcpy(new_values, values, numAttrs * sizeof(Datum));
+
+	num_to_free = 0;
+	for (i = 0; i < numAttrs; i++)
+	{
+		/*
+		 * Look at non-null varlena attributes
+		 */
+		if (!isnull[i] && att[i]->attlen == -1)
+		{
+			struct varlena *new_value;
+
+			new_value = (struct varlena *) DatumGetPointer(new_values[i]);
+			if (VARATT_IS_EXTERNAL(new_value))
+			{
+				new_value = heap_tuple_fetch_attr(new_value);
+				new_values[i] = PointerGetDatum(new_value);
+				freeable_values[num_to_free++] = (Pointer) new_value;
+			}
+		}
+	}
+
+	/*
+	 * Form the reconfigured tuple.
+	 */
+	new_tuple = heap_form_tuple(tupleDesc, new_values, isnull);
+
+	/*
+	 * Free allocated temp values
+	 */
+	for (i = 0; i < num_to_free; i++)
+		pfree(freeable_values[i]);
+
+	return new_tuple;
+}
+
+
+/* ----------
  * toast_compress_datum -
  *
  *	Create a compressed version of a varlena datum
@@ -1400,7 +1468,7 @@ toast_get_valid_index(Oid toastoid, LOCKMODE lock)
  */
 static Datum
 toast_save_datum(Relation rel, Datum value,
-				 struct varlena * oldexternal, int options)
+				 struct varlena *oldexternal, int options)
 {
 	Relation	toastrel;
 	Relation   *toastidxs;
@@ -1455,7 +1523,7 @@ toast_save_datum(Relation rel, Datum value,
 	{
 		data_p = VARDATA_SHORT(dval);
 		data_todo = VARSIZE_SHORT(dval) - VARHDRSZ_SHORT;
-		toast_pointer.va_rawsize = data_todo + VARHDRSZ;		/* as if not short */
+		toast_pointer.va_rawsize = data_todo + VARHDRSZ;	/* as if not short */
 		toast_pointer.va_extsize = data_todo;
 	}
 	else if (VARATT_IS_COMPRESSED(dval))
@@ -1560,7 +1628,7 @@ toast_save_datum(Relation rel, Datum value,
 			{
 				toast_pointer.va_valueid =
 					GetNewOidWithIndex(toastrel,
-									 RelationGetRelid(toastidxs[validIndex]),
+									   RelationGetRelid(toastidxs[validIndex]),
 									   (AttrNumber) 1);
 			} while (toastid_valueid_exists(rel->rd_toastoid,
 											toast_pointer.va_valueid));
@@ -1805,7 +1873,7 @@ toastid_valueid_exists(Oid toastrelid, Oid valueid)
  * ----------
  */
 static struct varlena *
-toast_fetch_datum(struct varlena * attr)
+toast_fetch_datum(struct varlena *attr)
 {
 	Relation	toastrel;
 	Relation   *toastidxs;
@@ -1976,7 +2044,7 @@ toast_fetch_datum(struct varlena * attr)
  * ----------
  */
 static struct varlena *
-toast_fetch_datum_slice(struct varlena * attr, int32 sliceoffset, int32 length)
+toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset, int32 length)
 {
 	Relation	toastrel;
 	Relation   *toastidxs;
@@ -2100,7 +2168,7 @@ toast_fetch_datum_slice(struct varlena * attr, int32 sliceoffset, int32 length)
 	init_toast_snapshot(&SnapshotToast);
 	nextidx = startchunk;
 	toastscan = systable_beginscan_ordered(toastrel, toastidxs[validIndex],
-										&SnapshotToast, nscankeys, toastkey);
+										   &SnapshotToast, nscankeys, toastkey);
 	while ((ttup = systable_getnext_ordered(toastscan, ForwardScanDirection)) != NULL)
 	{
 		/*
@@ -2208,7 +2276,7 @@ toast_fetch_datum_slice(struct varlena * attr, int32 sliceoffset, int32 length)
  * Decompress a compressed version of a varlena datum
  */
 static struct varlena *
-toast_decompress_datum(struct varlena * attr)
+toast_decompress_datum(struct varlena *attr)
 {
 	struct varlena *result;
 

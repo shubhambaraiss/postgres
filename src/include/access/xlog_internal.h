@@ -1,7 +1,7 @@
 /*
  * xlog_internal.h
  *
- * PostgreSQL transaction log internal declarations
+ * PostgreSQL write-ahead log internal declarations
  *
  * NOTE: this file is intended to contain declarations useful for
  * manipulating the XLOG files directly, but it is not supposed to be
@@ -31,7 +31,7 @@
 /*
  * Each page of XLOG file has a header like this:
  */
-#define XLOG_PAGE_MAGIC 0xD095	/* can be used as WAL version indicator */
+#define XLOG_PAGE_MAGIC 0xD097	/* can be used as WAL version indicator */
 
 typedef struct XLogPageHeaderData
 {
@@ -319,4 +319,4 @@ extern bool XLogArchiveIsReady(const char *xlog);
 extern bool XLogArchiveIsReadyOrDone(const char *xlog);
 extern void XLogArchiveCleanup(const char *xlog);
 
-#endif   /* XLOG_INTERNAL_H */
+#endif							/* XLOG_INTERNAL_H */

@@ -73,12 +73,55 @@
 test=# SELECT * FROM page_header(get_raw_page('pg_class', 0));
     lsn    | checksum | flags  | lower | upper | special | pagesize | version | prune_xid
 -----------+----------+--------+-------+-------+---------+----------+---------+-----------
- 0/24A1B50 |        1 |      1 |   232 |   368 |    8192 |     8192 |       4 |         0
+ 0/24A1B50 |        0 |      1 |   232 |   368 |    8192 |     8192 |       4 |         0
 </screen>
       The returned columns correspond to the fields in the
       <structname>PageHeaderData</> struct.
       See <filename>src/include/storage/bufpage.h</> for details.
-    </para>
+     </para>
+
+     <para>
+      The <structfield>checksum</structfield> field is the checksum stored in
+      the page, which might be incorrect if the page is somehow corrupted.  If
+      data checksums are not enabled for this instance, then the value stored
+      is meaningless.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <function>page_checksum(page bytea, blkno int4) returns smallint</function>
+     <indexterm>
+      <primary>page_checksum</primary>
+     </indexterm>
+    </term>
+
+    <listitem>
+     <para>
+      <function>page_checksum</function> computes the checksum for the page, as if
+      it was located at the given block.
+     </para>
+
+     <para>
+      A page image obtained with <function>get_raw_page</function> should be
+      passed as argument.  For example:
+<screen>
+test=# SELECT page_checksum(get_raw_page('pg_class', 0), 0);
+ page_checksum
+---------------
+         13443
+</screen>
+      Note that the checksum depends on the block number, so matching block
+      numbers should be passed (except when doing esoteric debugging).
+     </para>
+
+     <para>
+      The checksum computed with this function can be compared with
+      the <structfield>checksum</structfield> result field of the
+      function <function>page_header</function>.  If data checksums are
+      enabled for this instance, then the two values should be equal.
+     </para>
     </listitem>
    </varlistentry>
 
@@ -287,6 +330,38 @@ test=# SELECT * FROM bt_page_items('pg_cast_oid_index', 1);
       key) is a <quote>minus infinity</quote> item, with no actual value
       in its <structfield>data</> field.  Such an item does have a valid
       downlink in its <structfield>ctid</> field, however.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>
+     <function>bt_page_items(page bytea) returns setof record</function>
+     <indexterm>
+      <primary>bt_page_items</primary>
+     </indexterm>
+    </term>
+
+    <listitem>
+     <para>
+      It is also possible to pass a page to <function>bt_page_items</function>
+      as a <type>bytea</> value.  A page image obtained
+      with <function>get_raw_page</function> should be passed as argument.  So
+      the last example could also be rewritten like this:
+<screen>
+test=# SELECT * FROM bt_page_items(get_raw_page('pg_cast_oid_index', 1));
+ itemoffset |  ctid   | itemlen | nulls | vars |    data
+------------+---------+---------+-------+------+-------------
+          1 | (0,1)   |      12 | f     | f    | 23 27 00 00
+          2 | (0,2)   |      12 | f     | f    | 24 27 00 00
+          3 | (0,3)   |      12 | f     | f    | 25 27 00 00
+          4 | (0,4)   |      12 | f     | f    | 26 27 00 00
+          5 | (0,5)   |      12 | f     | f    | 27 27 00 00
+          6 | (0,6)   |      12 | f     | f    | 28 27 00 00
+          7 | (0,7)   |      12 | f     | f    | 29 27 00 00
+          8 | (0,8)   |      12 | f     | f    | 2a 27 00 00
+</screen>
+      All the other details are the same as explained in the previous item.
      </para>
     </listitem>
    </varlistentry>
@@ -615,7 +690,7 @@ test=# SELECT * FROM hash_bitmap_info('con_hash_index', 2052);
 test=# SELECT * FROM hash_metapage_info(get_raw_page('con_hash_index', 0));
 -[ RECORD 1 ]-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 magic     | 105121344
-version   | 2
+version   | 3
 ntuples   | 500500
 ffactor   | 40
 bsize     | 8152
@@ -624,11 +699,11 @@ bmshift   | 15
 maxbucket | 12512
 highmask  | 16383
 lowmask   | 8191
-ovflpoint | 14
+ovflpoint | 28
 firstfree | 1204
 nmaps     | 1
 procid    | 450
-spares    | {0,0,0,0,0,0,1,1,1,1,1,4,59,704,1204,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
+spares    | {0,0,0,0,0,0,1,1,1,1,1,1,1,1,3,4,4,4,45,55,58,59,508,567,628,704,1193,1202,1204,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
 mapp      | {65,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
 </screen>
      </para>

@@ -15,11 +15,13 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "catalog/pg_authid.h"
 #include "catalog/pg_type.h"
 #include "common/ip.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "postmaster/postmaster.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/acl.h"
@@ -538,7 +540,7 @@ pg_stat_get_progress_info(PG_FUNCTION_ARGS)
 Datum
 pg_stat_get_activity(PG_FUNCTION_ARGS)
 {
-#define PG_STAT_GET_ACTIVITY_COLS	23
+#define PG_STAT_GET_ACTIVITY_COLS	24
 	int			num_backends = pgstat_fetch_stat_numbackends();
 	int			curr_backend;
 	int			pid = PG_ARGISNULL(0) ? -1 : PG_GETARG_INT32(0);
@@ -582,8 +584,8 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 		LocalPgBackendStatus *local_beentry;
 		PgBackendStatus *beentry;
 		PGPROC	   *proc;
-		const char *wait_event_type;
-		const char *wait_event;
+		const char *wait_event_type = NULL;
+		const char *wait_event = NULL;
 
 		MemSet(values, 0, sizeof(values));
 		MemSet(nulls, 0, sizeof(nulls));
@@ -615,9 +617,18 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 			continue;
 
 		/* Values available to all callers */
-		values[0] = ObjectIdGetDatum(beentry->st_databaseid);
+		if (beentry->st_databaseid != InvalidOid)
+			values[0] = ObjectIdGetDatum(beentry->st_databaseid);
+		else
+			nulls[0] = true;
+
 		values[1] = Int32GetDatum(beentry->st_procpid);
-		values[2] = ObjectIdGetDatum(beentry->st_userid);
+
+		if (beentry->st_userid != InvalidOid)
+			values[2] = ObjectIdGetDatum(beentry->st_userid);
+		else
+			nulls[2] = true;
+
 		if (beentry->st_appname)
 			values[3] = CStringGetTextDatum(beentry->st_appname);
 		else
@@ -635,21 +646,22 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 
 		if (beentry->st_ssl)
 		{
-			values[17] = BoolGetDatum(true);	/* ssl */
-			values[18] = CStringGetTextDatum(beentry->st_sslstatus->ssl_version);
-			values[19] = CStringGetTextDatum(beentry->st_sslstatus->ssl_cipher);
-			values[20] = Int32GetDatum(beentry->st_sslstatus->ssl_bits);
-			values[21] = BoolGetDatum(beentry->st_sslstatus->ssl_compression);
-			values[22] = CStringGetTextDatum(beentry->st_sslstatus->ssl_clientdn);
+			values[18] = BoolGetDatum(true);	/* ssl */
+			values[19] = CStringGetTextDatum(beentry->st_sslstatus->ssl_version);
+			values[20] = CStringGetTextDatum(beentry->st_sslstatus->ssl_cipher);
+			values[21] = Int32GetDatum(beentry->st_sslstatus->ssl_bits);
+			values[22] = BoolGetDatum(beentry->st_sslstatus->ssl_compression);
+			values[23] = CStringGetTextDatum(beentry->st_sslstatus->ssl_clientdn);
 		}
 		else
 		{
-			values[17] = BoolGetDatum(false);	/* ssl */
-			nulls[18] = nulls[19] = nulls[20] = nulls[21] = nulls[22] = true;
+			values[18] = BoolGetDatum(false);	/* ssl */
+			nulls[19] = nulls[20] = nulls[21] = nulls[22] = nulls[23] = true;
 		}
 
-		/* Values only available to role member */
-		if (has_privs_of_role(GetUserId(), beentry->st_userid))
+		/* Values only available to role member or pg_read_all_stats */
+		if (has_privs_of_role(GetUserId(), beentry->st_userid) ||
+			is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_STATS))
 		{
 			SockAddr	zero_clientaddr;
 
@@ -690,10 +702,24 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 				wait_event = pgstat_get_wait_event(raw_wait_event);
 
 			}
-			else
+			else if (beentry->st_backendType != B_BACKEND)
 			{
-				wait_event_type = NULL;
-				wait_event = NULL;
+				/*
+				 * For an auxiliary process, retrieve process info from
+				 * AuxiliaryProcs stored in shared-memory.
+				 */
+				proc = AuxiliaryPidGetProc(beentry->st_procpid);
+
+				if (proc != NULL)
+				{
+					uint32		raw_wait_event;
+
+					raw_wait_event =
+						UINT32_ACCESS_ONCE(proc->wait_event_info);
+					wait_event_type =
+						pgstat_get_wait_event_type(raw_wait_event);
+					wait_event = pgstat_get_wait_event(raw_wait_event);
+				}
 			}
 
 			if (wait_event_type)
@@ -758,7 +784,7 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 					{
 						clean_ipv6_addr(beentry->st_clientaddr.addr.ss_family, remote_host);
 						values[12] = DirectFunctionCall1(inet_in,
-											   CStringGetDatum(remote_host));
+														 CStringGetDatum(remote_host));
 						if (beentry->st_clienthostname &&
 							beentry->st_clienthostname[0])
 							values[13] = CStringGetTextDatum(beentry->st_clienthostname);
@@ -793,6 +819,9 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 					nulls[14] = true;
 				}
 			}
+			/* Add backend type */
+			values[17] =
+				CStringGetTextDatum(pgstat_get_backend_desc(beentry->st_backendType));
 		}
 		else
 		{
@@ -808,6 +837,7 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 			nulls[12] = true;
 			nulls[13] = true;
 			nulls[14] = true;
+			nulls[17] = true;
 		}
 
 		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
@@ -1829,5 +1859,5 @@ pg_stat_get_archiver(PG_FUNCTION_ARGS)
 
 	/* Returns the record as Datum */
 	PG_RETURN_DATUM(HeapTupleGetDatum(
-								   heap_form_tuple(tupdesc, values, nulls)));
+									  heap_form_tuple(tupdesc, values, nulls)));
 }

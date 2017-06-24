@@ -284,7 +284,7 @@ ResolveRecoveryConflictWithSnapshot(TransactionId latestRemovedXid, RelFileNode 
 										 node.dbNode);
 
 	ResolveRecoveryConflictWithVirtualXIDs(backends,
-										 PROCSIG_RECOVERY_CONFLICT_SNAPSHOT);
+										   PROCSIG_RECOVERY_CONFLICT_SNAPSHOT);
 }
 
 void
@@ -312,7 +312,7 @@ ResolveRecoveryConflictWithTablespace(Oid tsid)
 	temp_file_users = GetConflictingVirtualXIDs(InvalidTransactionId,
 												InvalidOid);
 	ResolveRecoveryConflictWithVirtualXIDs(temp_file_users,
-									   PROCSIG_RECOVERY_CONFLICT_TABLESPACE);
+										   PROCSIG_RECOVERY_CONFLICT_TABLESPACE);
 }
 
 void
@@ -376,7 +376,7 @@ ResolveRecoveryConflictWithLock(LOCKTAG locktag)
 
 		backends = GetLockConflicts(&locktag, AccessExclusiveLock);
 		ResolveRecoveryConflictWithVirtualXIDs(backends,
-											 PROCSIG_RECOVERY_CONFLICT_LOCK);
+											   PROCSIG_RECOVERY_CONFLICT_LOCK);
 	}
 	else
 	{
@@ -529,7 +529,7 @@ CheckRecoveryConflictDeadlock(void)
 	ereport(ERROR,
 			(errcode(ERRCODE_T_R_DEADLOCK_DETECTED),
 			 errmsg("canceling statement due to conflict with recovery"),
-	   errdetail("User transaction caused buffer deadlock with recovery.")));
+			 errdetail("User transaction caused buffer deadlock with recovery.")));
 }
 
 
@@ -589,10 +589,6 @@ StandbyLockTimeoutHandler(void)
  * We keep a single dynamically expandible list of locks in local memory,
  * RelationLockList, so we can keep track of the various entries made by
  * the Startup process's virtual xid in the shared lock table.
- *
- * We record the lock against the top-level xid, rather than individual
- * subtransaction xids. This means AccessExclusiveLocks held by aborted
- * subtransactions are not released as early as possible on standbys.
  *
  * List elements use type xl_rel_lock, since the WAL record type exactly
  * matches the information that we need to keep track of.
@@ -990,7 +986,7 @@ LogCurrentRunningXacts(RunningTransactions CurrRunningXacts)
 	/* array of TransactionIds */
 	if (xlrec.xcnt > 0)
 		XLogRegisterData((char *) CurrRunningXacts->xids,
-					   (xlrec.xcnt + xlrec.subxcnt) * sizeof(TransactionId));
+						 (xlrec.xcnt + xlrec.subxcnt) * sizeof(TransactionId));
 
 	recptr = XLogInsert(RM_STANDBY_ID, XLOG_RUNNING_XACTS);
 
@@ -1052,7 +1048,7 @@ LogAccessExclusiveLock(Oid dbOid, Oid relOid)
 {
 	xl_standby_lock xlrec;
 
-	xlrec.xid = GetTopTransactionId();
+	xlrec.xid = GetCurrentTransactionId();
 
 	/*
 	 * Decode the locktag back to the original values, to avoid sending lots
@@ -1063,6 +1059,7 @@ LogAccessExclusiveLock(Oid dbOid, Oid relOid)
 	xlrec.relOid = relOid;
 
 	LogAccessExclusiveLocks(1, &xlrec);
+	MyXactFlags |= XACT_FLAGS_ACQUIREDACCESSEXCLUSIVELOCK;
 }
 
 /*
@@ -1083,7 +1080,7 @@ LogAccessExclusiveLockPrepare(void)
 	 * GetRunningTransactionLocks() might see a lock associated with an
 	 * InvalidTransactionId which we later assert cannot happen.
 	 */
-	(void) GetTopTransactionId();
+	(void) GetCurrentTransactionId();
 }
 
 /*

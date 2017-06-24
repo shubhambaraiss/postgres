@@ -61,7 +61,9 @@
 #include "catalog/pg_shseclabel.h"
 #include "catalog/pg_replication_origin.h"
 #include "catalog/pg_statistic.h"
+#include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_subscription.h"
+#include "catalog/pg_subscription_rel.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_ts_config.h"
@@ -417,7 +419,7 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		8
 	},
-	{ForeignDataWrapperRelationId,		/* FOREIGNDATAWRAPPERNAME */
+	{ForeignDataWrapperRelationId,	/* FOREIGNDATAWRAPPERNAME */
 		ForeignDataWrapperNameIndexId,
 		1,
 		{
@@ -428,7 +430,7 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		2
 	},
-	{ForeignDataWrapperRelationId,		/* FOREIGNDATAWRAPPEROID */
+	{ForeignDataWrapperRelationId,	/* FOREIGNDATAWRAPPEROID */
 		ForeignDataWrapperOidIndexId,
 		1,
 		{
@@ -604,6 +606,50 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		128
 	},
+	{PublicationRelationId,		/* PUBLICATIONNAME */
+		PublicationNameIndexId,
+		1,
+		{
+			Anum_pg_publication_pubname,
+			0,
+			0,
+			0
+		},
+		8
+	},
+	{PublicationRelationId,		/* PUBLICATIONOID */
+		PublicationObjectIndexId,
+		1,
+		{
+			ObjectIdAttributeNumber,
+			0,
+			0,
+			0
+		},
+		8
+	},
+	{PublicationRelRelationId,	/* PUBLICATIONREL */
+		PublicationRelObjectIndexId,
+		1,
+		{
+			ObjectIdAttributeNumber,
+			0,
+			0,
+			0
+		},
+		64
+	},
+	{PublicationRelRelationId,	/* PUBLICATIONRELMAP */
+		PublicationRelPrrelidPrpubidIndexId,
+		2,
+		{
+			Anum_pg_publication_rel_prrelid,
+			Anum_pg_publication_rel_prpubid,
+			0,
+			0
+		},
+		64
+	},
 	{RangeRelationId,			/* RANGETYPE */
 		RangeTypidIndexId,
 		1,
@@ -637,7 +683,7 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		128
 	},
-	{ReplicationOriginRelationId,		/* REPLORIGIDENT */
+	{ReplicationOriginRelationId,	/* REPLORIGIDENT */
 		ReplicationOriginIdentIndex,
 		1,
 		{
@@ -648,7 +694,7 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		16
 	},
-	{ReplicationOriginRelationId,		/* REPLORIGNAME */
+	{ReplicationOriginRelationId,	/* REPLORIGNAME */
 		ReplicationOriginNameIndex,
 		1,
 		{
@@ -658,50 +704,6 @@ static const struct cachedesc cacheinfo[] = {
 			0
 		},
 		16
-	},
-	{PublicationRelationId,			/* PUBLICATIONOID */
-		PublicationObjectIndexId,
-		1,
-		{
-			ObjectIdAttributeNumber,
-			0,
-			0,
-			0
-		},
-		8
-	},
-	{PublicationRelationId,			/* PUBLICATIONNAME */
-		PublicationNameIndexId,
-		1,
-		{
-			Anum_pg_publication_pubname,
-			0,
-			0,
-			0
-		},
-		8
-	},
-	{PublicationRelRelationId,		/* PUBLICATIONREL */
-		PublicationRelObjectIndexId,
-		1,
-		{
-			ObjectIdAttributeNumber,
-			0,
-			0,
-			0
-		},
-		64
-	},
-	{PublicationRelRelationId,		/* PUBLICATIONRELMAP */
-		PublicationRelMapIndexId,
-		2,
-		{
-			Anum_pg_publication_rel_prrelid,
-			Anum_pg_publication_rel_prpubid,
-			0,
-			0
-		},
-		64
 	},
 	{RewriteRelationId,			/* RULERELNAME */
 		RewriteRelRulenameIndexId,
@@ -714,7 +716,7 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		8
 	},
-	{SequenceRelationId,			/* SEQRELID */
+	{SequenceRelationId,		/* SEQRELID */
 		SequenceRelidIndexId,
 		1,
 		{
@@ -724,6 +726,28 @@ static const struct cachedesc cacheinfo[] = {
 			0
 		},
 		32
+	},
+	{StatisticExtRelationId,	/* STATEXTNAMENSP */
+		StatisticExtNameIndexId,
+		2,
+		{
+			Anum_pg_statistic_ext_stxname,
+			Anum_pg_statistic_ext_stxnamespace,
+			0,
+			0
+		},
+		4
+	},
+	{StatisticExtRelationId,	/* STATEXTOID */
+		StatisticExtOidIndexId,
+		1,
+		{
+			ObjectIdAttributeNumber,
+			0,
+			0,
+			0
+		},
+		4
 	},
 	{StatisticRelationId,		/* STATRELATTINH */
 		StatisticRelidAttnumInhIndexId,
@@ -736,7 +760,18 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		128
 	},
-	{SubscriptionRelationId,		/* SUBSCRIPTIONOID */
+	{SubscriptionRelationId,	/* SUBSCRIPTIONNAME */
+		SubscriptionNameIndexId,
+		2,
+		{
+			Anum_pg_subscription_subdbid,
+			Anum_pg_subscription_subname,
+			0,
+			0
+		},
+		4
+	},
+	{SubscriptionRelationId,	/* SUBSCRIPTIONOID */
 		SubscriptionObjectIndexId,
 		1,
 		{
@@ -747,16 +782,16 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		4
 	},
-	{SubscriptionRelationId,		/* SUBSCRIPTIONNAME */
-		SubscriptionNameIndexId,
+	{SubscriptionRelRelationId, /* SUBSCRIPTIONRELMAP */
+		SubscriptionRelSrrelidSrsubidIndexId,
 		2,
 		{
-			Anum_pg_subscription_subdbid,
-			Anum_pg_subscription_subname,
+			Anum_pg_subscription_rel_srrelid,
+			Anum_pg_subscription_rel_srsubid,
 			0,
 			0
 		},
-		4
+		64
 	},
 	{TableSpaceRelationId,		/* TABLESPACEOID */
 		TablespaceOidIndexId,
@@ -936,8 +971,6 @@ static const struct cachedesc cacheinfo[] = {
 	}
 };
 
-#define SysCacheSize	((int) lengthof(cacheinfo))
-
 static CatCache *SysCache[SysCacheSize];
 
 static bool CacheInitialized = false;
@@ -967,6 +1000,9 @@ InitCatalogCache(void)
 	int			cacheId;
 	int			i,
 				j;
+
+	StaticAssertStmt(SysCacheSize == (int) lengthof(cacheinfo),
+					 "SysCacheSize does not match syscache.c's array");
 
 	Assert(!CacheInitialized);
 
@@ -1301,6 +1337,27 @@ SearchSysCacheList(int cacheId, int nkeys,
 
 	return SearchCatCacheList(SysCache[cacheId], nkeys,
 							  key1, key2, key3, key4);
+}
+
+/*
+ * SysCacheInvalidate
+ *
+ *	Invalidate entries in the specified cache, given a hash value.
+ *	See CatCacheInvalidate() for more info.
+ *
+ *	This routine is only quasi-public: it should only be used by inval.c.
+ */
+void
+SysCacheInvalidate(int cacheId, uint32 hashValue)
+{
+	if (cacheId < 0 || cacheId >= SysCacheSize)
+		elog(ERROR, "invalid cache ID: %d", cacheId);
+
+	/* if this cache isn't initialized yet, no need to do anything */
+	if (!PointerIsValid(SysCache[cacheId]))
+		return;
+
+	CatCacheInvalidate(SysCache[cacheId], hashValue);
 }
 
 /*

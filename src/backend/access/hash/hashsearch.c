@@ -462,8 +462,12 @@ _hash_step(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 						}
 
 						if (so->hashso_sk_hash == _hash_get_indextuple_hashkey(itup))
-							break;		/* yes, so exit for-loop */
+							break;	/* yes, so exit for-loop */
 					}
+
+					/* Before leaving current page, deal with any killed items */
+					if (so->numKilled > 0)
+						_hash_kill_items(scan);
 
 					/*
 					 * ran off the end of this page, try the next
@@ -515,8 +519,12 @@ _hash_step(IndexScanDesc scan, Buffer *bufP, ScanDirection dir)
 						}
 
 						if (so->hashso_sk_hash == _hash_get_indextuple_hashkey(itup))
-							break;		/* yes, so exit for-loop */
+							break;	/* yes, so exit for-loop */
 					}
+
+					/* Before leaving current page, deal with any killed items */
+					if (so->numKilled > 0)
+						_hash_kill_items(scan);
 
 					/*
 					 * ran off the end of this page, try the next

@@ -149,7 +149,7 @@ readOneRecord(const char *datadir, XLogRecPtr ptr, int tliIndex)
 }
 
 /*
- * Find the previous checkpoint preceding given WAL position.
+ * Find the previous checkpoint preceding given WAL location.
  */
 void
 findLastCheckpoint(const char *datadir, XLogRecPtr forkptr, int tliIndex,
@@ -371,7 +371,7 @@ extractPageInfo(XLogReaderState *record)
 		 */
 		pg_fatal("WAL record modifies a relation, but record type is not recognized\n"
 				 "lsn: %X/%X, rmgr: %s, info: %02X\n",
-		  (uint32) (record->ReadRecPtr >> 32), (uint32) (record->ReadRecPtr),
+				 (uint32) (record->ReadRecPtr >> 32), (uint32) (record->ReadRecPtr),
 				 RmgrNames[rmid], info);
 	}
 

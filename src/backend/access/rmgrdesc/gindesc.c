@@ -89,8 +89,8 @@ gin_desc(StringInfo buf, XLogReaderState *record)
 				ginxlogInsert *xlrec = (ginxlogInsert *) rec;
 
 				appendStringInfo(buf, "isdata: %c isleaf: %c",
-							  (xlrec->flags & GIN_INSERT_ISDATA) ? 'T' : 'F',
-							 (xlrec->flags & GIN_INSERT_ISLEAF) ? 'T' : 'F');
+								 (xlrec->flags & GIN_INSERT_ISDATA) ? 'T' : 'F',
+								 (xlrec->flags & GIN_INSERT_ISLEAF) ? 'T' : 'F');
 				if (!(xlrec->flags & GIN_INSERT_ISLEAF))
 				{
 					char	   *payload = rec + sizeof(ginxlogInsert);
@@ -117,13 +117,13 @@ gin_desc(StringInfo buf, XLogReaderState *record)
 
 					if (!(xlrec->flags & GIN_INSERT_ISDATA))
 						appendStringInfo(buf, " isdelete: %c",
-						 (((ginxlogInsertEntry *) payload)->isDelete) ? 'T' : 'F');
+										 (((ginxlogInsertEntry *) payload)->isDelete) ? 'T' : 'F');
 					else if (xlrec->flags & GIN_INSERT_ISLEAF)
 						desc_recompress_leaf(buf, (ginxlogRecompressDataLeaf *) payload);
 					else
 					{
 						ginxlogInsertDataInternal *insertData =
-							(ginxlogInsertDataInternal *) payload;
+						(ginxlogInsertDataInternal *) payload;
 
 						appendStringInfo(buf, " pitem: %u-%u/%u",
 										 PostingItemGetBlockNumber(&insertData->newitem),
@@ -138,10 +138,10 @@ gin_desc(StringInfo buf, XLogReaderState *record)
 				ginxlogSplit *xlrec = (ginxlogSplit *) rec;
 
 				appendStringInfo(buf, "isrootsplit: %c",
-				(((ginxlogSplit *) rec)->flags & GIN_SPLIT_ROOT) ? 'T' : 'F');
+								 (((ginxlogSplit *) rec)->flags & GIN_SPLIT_ROOT) ? 'T' : 'F');
 				appendStringInfo(buf, " isdata: %c isleaf: %c",
-							  (xlrec->flags & GIN_INSERT_ISDATA) ? 'T' : 'F',
-							 (xlrec->flags & GIN_INSERT_ISLEAF) ? 'T' : 'F');
+								 (xlrec->flags & GIN_INSERT_ISDATA) ? 'T' : 'F',
+								 (xlrec->flags & GIN_INSERT_ISLEAF) ? 'T' : 'F');
 			}
 			break;
 		case XLOG_GIN_VACUUM_PAGE:
@@ -159,7 +159,7 @@ gin_desc(StringInfo buf, XLogReaderState *record)
 				else
 				{
 					ginxlogVacuumDataLeafPage *xlrec =
-						(ginxlogVacuumDataLeafPage *) XLogRecGetBlockData(record, 0, NULL);
+					(ginxlogVacuumDataLeafPage *) XLogRecGetBlockData(record, 0, NULL);
 
 					desc_recompress_leaf(buf, &xlrec->data);
 				}

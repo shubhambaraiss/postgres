@@ -289,7 +289,7 @@ win32_check_directory_write_permissions(void)
 /*
  * check_single_dir()
  *
- *  Check for the presence of a single directory in PGDATA, and fail if
+ *	Check for the presence of a single directory in PGDATA, and fail if
  * is it missing or not accessible.
  */
 static void
@@ -299,7 +299,7 @@ check_single_dir(const char *pg_data, const char *subdir)
 	char		subDirName[MAXPGPATH];
 
 	snprintf(subDirName, sizeof(subDirName), "%s%s%s", pg_data,
-			 /* Win32 can't stat() a directory with a trailing slash. */
+	/* Win32 can't stat() a directory with a trailing slash. */
 			 *subdir ? "/" : "",
 			 subdir);
 
@@ -338,11 +338,17 @@ check_data_dir(ClusterInfo *cluster)
 	check_single_dir(pg_data, "pg_tblspc");
 	check_single_dir(pg_data, "pg_twophase");
 
-	/* pg_xlog has been renamed to pg_wal in post-10 cluster */
+	/* pg_xlog has been renamed to pg_wal in v10 */
 	if (GET_MAJOR_VERSION(cluster->major_version) < 1000)
 		check_single_dir(pg_data, "pg_xlog");
 	else
 		check_single_dir(pg_data, "pg_wal");
+
+	/* pg_clog has been renamed to pg_xact in v10 */
+	if (GET_MAJOR_VERSION(cluster->major_version) < 1000)
+		check_single_dir(pg_data, "pg_clog");
+	else
+		check_single_dir(pg_data, "pg_xact");
 }
 
 

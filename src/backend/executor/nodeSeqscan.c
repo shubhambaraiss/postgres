@@ -90,8 +90,8 @@ SeqNext(SeqScanState *node)
 	if (tuple)
 		ExecStoreTuple(tuple,	/* tuple to store */
 					   slot,	/* slot to store in */
-					   scandesc->rs_cbuf,		/* buffer associated with this
-												 * tuple */
+					   scandesc->rs_cbuf,	/* buffer associated with this
+											 * tuple */
 					   false);	/* don't pfree this pointer */
 	else
 		ExecClearTuple(slot);
@@ -145,7 +145,7 @@ InitScanRelation(SeqScanState *node, EState *estate, int eflags)
 	 * open that relation and acquire appropriate lock on it.
 	 */
 	currentRelation = ExecOpenScanRelation(estate,
-								   ((SeqScan *) node->ss.ps.plan)->scanrelid,
+										   ((SeqScan *) node->ss.ps.plan)->scanrelid,
 										   eflags);
 
 	node->ss.ss_currentRelation = currentRelation;
@@ -188,12 +188,8 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	/*
 	 * initialize child expressions
 	 */
-	scanstate->ss.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->plan.targetlist,
-					 (PlanState *) scanstate);
-	scanstate->ss.ps.qual = (List *)
-		ExecInitExpr((Expr *) node->plan.qual,
-					 (PlanState *) scanstate);
+	scanstate->ss.ps.qual =
+		ExecInitQual(node->plan.qual, (PlanState *) scanstate);
 
 	/*
 	 * tuple table initialization
@@ -336,7 +332,7 @@ ExecSeqScanInitializeWorker(SeqScanState *node, shm_toc *toc)
 {
 	ParallelHeapScanDesc pscan;
 
-	pscan = shm_toc_lookup(toc, node->ss.ps.plan->plan_node_id);
+	pscan = shm_toc_lookup(toc, node->ss.ps.plan->plan_node_id, false);
 	node->ss.ss_currentScanDesc =
 		heap_beginscan_parallel(node->ss.ss_currentRelation, pscan);
 }

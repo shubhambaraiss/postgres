@@ -237,8 +237,8 @@ DefineTSParser(List *names, List *parameters)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("text search parser parameter \"%s\" not recognized",
-						defel->defname)));
+					 errmsg("text search parser parameter \"%s\" not recognized",
+							defel->defname)));
 	}
 
 	/*
@@ -381,8 +381,8 @@ verify_dictoptions(Oid tmplId, List *dictoptions)
 		if (dictoptions)
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("text search template \"%s\" does not accept options",
-					   NameStr(tform->tmplname))));
+					 errmsg("text search template \"%s\" does not accept options",
+							NameStr(tform->tmplname))));
 	}
 	else
 	{
@@ -743,7 +743,7 @@ DefineTSTemplate(List *names, List *parameters)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			   errmsg("must be superuser to create text search templates")));
+				 errmsg("must be superuser to create text search templates")));
 
 	/* Convert list of names to a name and namespace */
 	namespaceoid = QualifiedNameGetCreationNamespace(names, &tmplname);
@@ -780,8 +780,8 @@ DefineTSTemplate(List *names, List *parameters)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-			   errmsg("text search template parameter \"%s\" not recognized",
-					  defel->defname)));
+					 errmsg("text search template parameter \"%s\" not recognized",
+							defel->defname)));
 	}
 
 	/*
@@ -1484,8 +1484,8 @@ DropConfigurationMapping(AlterTSConfigurationStmt *stmt,
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_UNDEFINED_OBJECT),
-					   errmsg("mapping for token type \"%s\" does not exist",
-							  strVal(val))));
+						 errmsg("mapping for token type \"%s\" does not exist",
+								strVal(val))));
 			}
 			else
 			{
@@ -1561,7 +1561,7 @@ serialize_deflist(List *deflist)
 List *
 deserialize_deflist(Datum txt)
 {
-	text	   *in = DatumGetTextPP(txt);		/* in case it's toasted */
+	text	   *in = DatumGetTextPP(txt);	/* in case it's toasted */
 	List	   *result = NIL;
 	int			len = VARSIZE_ANY_EXHDR(in);
 	char	   *ptr,
@@ -1582,7 +1582,7 @@ deserialize_deflist(Datum txt)
 	} ds_state;
 	ds_state	state = CS_WAITKEY;
 
-	workspace = (char *) palloc(len + 1);		/* certainly enough room */
+	workspace = (char *) palloc(len + 1);	/* certainly enough room */
 	ptr = VARDATA_ANY(in);
 	endptr = ptr + len;
 	for (; ptr < endptr; ptr++)

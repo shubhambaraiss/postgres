@@ -127,11 +127,11 @@ typedef ArrayType Acl;
  * External representations of the privilege bits --- aclitemin/aclitemout
  * represent each possible privilege bit with a distinct 1-character code
  */
-#define ACL_INSERT_CHR			'a'		/* formerly known as "append" */
-#define ACL_SELECT_CHR			'r'		/* formerly known as "read" */
-#define ACL_UPDATE_CHR			'w'		/* formerly known as "write" */
+#define ACL_INSERT_CHR			'a' /* formerly known as "append" */
+#define ACL_SELECT_CHR			'r' /* formerly known as "read" */
+#define ACL_UPDATE_CHR			'w' /* formerly known as "write" */
 #define ACL_DELETE_CHR			'd'
-#define ACL_TRUNCATE_CHR		'D'		/* super-delete, as it were */
+#define ACL_TRUNCATE_CHR		'D' /* super-delete, as it were */
 #define ACL_REFERENCES_CHR		'x'
 #define ACL_TRIGGER_CHR			't'
 #define ACL_EXECUTE_CHR			'X'
@@ -192,6 +192,7 @@ typedef enum AclObjectKind
 	ACL_KIND_OPFAMILY,			/* pg_opfamily */
 	ACL_KIND_COLLATION,			/* pg_collation */
 	ACL_KIND_CONVERSION,		/* pg_conversion */
+	ACL_KIND_STATISTICS,		/* pg_statistic_ext */
 	ACL_KIND_TABLESPACE,		/* pg_tablespace */
 	ACL_KIND_TSDICTIONARY,		/* pg_ts_dict */
 	ACL_KIND_TSCONFIGURATION,	/* pg_ts_config */
@@ -264,7 +265,7 @@ extern AclMode pg_proc_aclmask(Oid proc_oid, Oid roleid,
 extern AclMode pg_language_aclmask(Oid lang_oid, Oid roleid,
 					AclMode mask, AclMaskHow how);
 extern AclMode pg_largeobject_aclmask_snapshot(Oid lobj_oid, Oid roleid,
-							AclMode mask, AclMaskHow how, Snapshot snapshot);
+								AclMode mask, AclMaskHow how, Snapshot snapshot);
 extern AclMode pg_namespace_aclmask(Oid nsp_oid, Oid roleid,
 					 AclMode mask, AclMaskHow how);
 extern AclMode pg_tablespace_aclmask(Oid spc_oid, Oid roleid,
@@ -326,7 +327,8 @@ extern bool pg_event_trigger_ownercheck(Oid et_oid, Oid roleid);
 extern bool pg_extension_ownercheck(Oid ext_oid, Oid roleid);
 extern bool pg_publication_ownercheck(Oid pub_oid, Oid roleid);
 extern bool pg_subscription_ownercheck(Oid sub_oid, Oid roleid);
+extern bool pg_statistics_object_ownercheck(Oid stat_oid, Oid roleid);
 extern bool has_createrole_privilege(Oid roleid);
 extern bool has_bypassrls_privilege(Oid roleid);
 
-#endif   /* ACL_H */
+#endif							/* ACL_H */

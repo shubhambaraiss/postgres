@@ -62,7 +62,7 @@ typedef struct pgstattuple_type
 } pgstattuple_type;
 
 typedef void (*pgstat_page) (pgstattuple_type *, Relation, BlockNumber,
-										 BufferAccessStrategy);
+							 BufferAccessStrategy);
 
 static Datum build_pgstattuple_type(pgstattuple_type *stat,
 					   FunctionCallInfo fcinfo);
@@ -356,7 +356,7 @@ pgstat_heap(Relation rel, FunctionCallInfo fcinfo)
 		 * heap_getnext may find no tuples on a given page, so we cannot
 		 * simply examine the pages returned by the heap scan.
 		 */
-		tupblock = BlockIdGetBlockNumber(&tuple->t_self.ip_blkid);
+		tupblock = ItemPointerGetBlockNumber(&tuple->t_self);
 
 		while (block <= tupblock)
 		{
@@ -386,7 +386,7 @@ pgstat_heap(Relation rel, FunctionCallInfo fcinfo)
 	heap_endscan(scan);
 	relation_close(rel, AccessShareLock);
 
-	stat.table_len = (uint64) nblocks *BLCKSZ;
+	stat.table_len = (uint64) nblocks * BLCKSZ;
 
 	return build_pgstattuple_type(&stat, fcinfo);
 }
@@ -453,7 +453,7 @@ pgstat_hash_page(pgstattuple_type *stat, Relation rel, BlockNumber blkno,
 		HashPageOpaque opaque;
 
 		opaque = (HashPageOpaque) PageGetSpecialPointer(page);
-		switch (opaque->hasho_flag)
+		switch (opaque->hasho_flag & LH_PAGE_TYPE)
 		{
 			case LH_UNUSED_PAGE:
 				stat->free_space += BLCKSZ;
@@ -531,7 +531,7 @@ pgstat_index(Relation rel, BlockNumber start, pgstat_page pagefn,
 		/* Quit if we've scanned the whole relation */
 		if (blkno >= nblocks)
 		{
-			stat.table_len = (uint64) nblocks *BLCKSZ;
+			stat.table_len = (uint64) nblocks * BLCKSZ;
 
 			break;
 		}

@@ -217,14 +217,37 @@ insert into mlparted (a, b) values (1, 5);
 
 truncate mlparted;
 alter table mlparted add constraint check_b check (b = 3);
--- check that correct input row is shown when constraint check_b fails on mlparted11
--- after "(1, 2)" is routed to it
+
+-- have a BR trigger modify the row such that the check_b is violated
+create function mlparted11_trig_fn()
+returns trigger AS
+$$
+begin
+  NEW.b := 4;
+  return NEW;
+end;
+$$
+language plpgsql;
+create trigger mlparted11_trig before insert ON mlparted11
+  for each row execute procedure mlparted11_trig_fn();
+
+-- check that the correct row is shown when constraint check_b fails after
+-- "(1, 2)" is routed to mlparted11 (actually "(1, 4)" would be shown due
+-- to the BR trigger mlparted11_trig_fn)
 insert into mlparted values (1, 2);
+drop trigger mlparted11_trig on mlparted11;
+drop function mlparted11_trig_fn();
 
 -- check that inserting into an internal partition successfully results in
 -- checking its partition constraint before inserting into the leaf partition
 -- selected by tuple-routing
 insert into mlparted1 (a, b) values (2, 3);
+
+-- check routing error through a list partitioned table when the key is null
+create table lparted_nonullpart (a int, b char) partition by list (b);
+create table lparted_nonullpart_a partition of lparted_nonullpart for values in ('a');
+insert into lparted_nonullpart values (1);
+drop table lparted_nonullpart;
 
 -- check that RETURNING works correctly with tuple-routing
 alter table mlparted drop constraint check_b;
@@ -266,3 +289,56 @@ revoke all on key_desc from someone_else;
 revoke all on key_desc_1 from someone_else;
 drop role someone_else;
 drop table key_desc, key_desc_1;
+
+-- check multi-column range partitioning expression enforces the same
+-- constraint as what tuple-routing would determine it to be
+create table mcrparted (a int, b int, c int) partition by range (a, abs(b), c);
+create table mcrparted0 partition of mcrparted for values from (unbounded, unbounded, unbounded) to (1, unbounded, unbounded);
+create table mcrparted1 partition of mcrparted for values from (2, 1, unbounded) to (10, 5, 10);
+create table mcrparted2 partition of mcrparted for values from (10, 6, unbounded) to (10, unbounded, unbounded);
+create table mcrparted3 partition of mcrparted for values from (11, 1, 1) to (20, 10, 10);
+create table mcrparted4 partition of mcrparted for values from (21, unbounded, unbounded) to (30, 20, unbounded);
+create table mcrparted5 partition of mcrparted for values from (30, 21, 20) to (unbounded, unbounded, unbounded);
+
+-- routed to mcrparted0
+insert into mcrparted values (0, 1, 1);
+insert into mcrparted0 values (0, 1, 1);
+
+-- routed to mcparted1
+insert into mcrparted values (9, 1000, 1);
+insert into mcrparted1 values (9, 1000, 1);
+insert into mcrparted values (10, 5, -1);
+insert into mcrparted1 values (10, 5, -1);
+insert into mcrparted values (2, 1, 0);
+insert into mcrparted1 values (2, 1, 0);
+
+-- routed to mcparted2
+insert into mcrparted values (10, 6, 1000);
+insert into mcrparted2 values (10, 6, 1000);
+insert into mcrparted values (10, 1000, 1000);
+insert into mcrparted2 values (10, 1000, 1000);
+
+-- no partition exists, nor does mcrparted3 accept it
+insert into mcrparted values (11, 1, -1);
+insert into mcrparted3 values (11, 1, -1);
+
+-- routed to mcrparted5
+insert into mcrparted values (30, 21, 20);
+insert into mcrparted5 values (30, 21, 20);
+insert into mcrparted4 values (30, 21, 20);	-- error
+
+-- check rows
+select tableoid::regclass::text, * from mcrparted order by 1;
+
+-- cleanup
+drop table mcrparted;
+
+-- check that a BR constraint can't make partition contain violating rows
+create table brtrigpartcon (a int, b text) partition by list (a);
+create table brtrigpartcon1 partition of brtrigpartcon for values in (1);
+create or replace function brtrigpartcon1trigf() returns trigger as $$begin new.a := 2; return new; end$$ language plpgsql;
+create trigger brtrigpartcon1trig before insert on brtrigpartcon1 for each row execute procedure brtrigpartcon1trigf();
+insert into brtrigpartcon values (1, 'hi there');
+insert into brtrigpartcon1 values (1, 'hi there');
+drop table brtrigpartcon;
+drop function brtrigpartcon1trigf();

@@ -110,10 +110,9 @@ static bool ExecParallelInitializeDSM(PlanState *node,
 static shm_mq_handle **ExecParallelSetupTupleQueues(ParallelContext *pcxt,
 							 bool reinitialize);
 static bool ExecParallelRetrieveInstrumentation(PlanState *planstate,
-							 SharedExecutorInstrumentation *instrumentation);
+									SharedExecutorInstrumentation *instrumentation);
 
-/* Helper functions that run in the parallel worker. */
-static void ParallelQueryMain(dsm_segment *seg, shm_toc *toc);
+/* Helper function that runs in the parallel worker. */
 static DestReceiver *ExecParallelGetReceiver(dsm_segment *seg, shm_toc *toc);
 
 /*
@@ -123,7 +122,7 @@ static char *
 ExecSerializePlan(Plan *plan, EState *estate)
 {
 	PlannedStmt *pstmt;
-	ListCell   *tlist;
+	ListCell   *lc;
 
 	/* We can't scribble on the original plan, so make a copy. */
 	plan = copyObject(plan);
@@ -137,9 +136,9 @@ ExecSerializePlan(Plan *plan, EState *estate)
 	 * accordingly.  This is sort of a hack; there might be better ways to do
 	 * this...
 	 */
-	foreach(tlist, plan->targetlist)
+	foreach(lc, plan->targetlist)
 	{
-		TargetEntry *tle = (TargetEntry *) lfirst(tlist);
+		TargetEntry *tle = lfirst_node(TargetEntry, lc);
 
 		tle->resjunk = false;
 	}
@@ -161,7 +160,25 @@ ExecSerializePlan(Plan *plan, EState *estate)
 	pstmt->planTree = plan;
 	pstmt->rtable = estate->es_range_table;
 	pstmt->resultRelations = NIL;
-	pstmt->subplans = estate->es_plannedstmt->subplans;
+	pstmt->nonleafResultRelations = NIL;
+
+	/*
+	 * Transfer only parallel-safe subplans, leaving a NULL "hole" in the list
+	 * for unsafe ones (so that the list indexes of the safe ones are
+	 * preserved).  This positively ensures that the worker won't try to run,
+	 * or even do ExecInitNode on, an unsafe subplan.  That's important to
+	 * protect, eg, non-parallel-aware FDWs from getting into trouble.
+	 */
+	pstmt->subplans = NIL;
+	foreach(lc, estate->es_plannedstmt->subplans)
+	{
+		Plan	   *subplan = (Plan *) lfirst(lc);
+
+		if (subplan && !subplan->parallel_safe)
+			subplan = NULL;
+		pstmt->subplans = lappend(pstmt->subplans, subplan);
+	}
+
 	pstmt->rewindPlanIDs = NULL;
 	pstmt->rowMarks = NIL;
 	pstmt->relationOids = NIL;
@@ -324,7 +341,7 @@ ExecParallelSetupTupleQueues(ParallelContext *pcxt, bool reinitialize)
 							 mul_size(PARALLEL_TUPLE_QUEUE_SIZE,
 									  pcxt->nworkers));
 	else
-		tqueuespace = shm_toc_lookup(pcxt->toc, PARALLEL_KEY_TUPLE_QUEUE);
+		tqueuespace = shm_toc_lookup(pcxt->toc, PARALLEL_KEY_TUPLE_QUEUE, false);
 
 	/* Create the queues, and become the receiver for each. */
 	for (i = 0; i < pcxt->nworkers; ++i)
@@ -392,7 +409,7 @@ ExecInitParallelPlan(PlanState *planstate, EState *estate, int nworkers)
 	pstmt_data = ExecSerializePlan(planstate->plan, estate);
 
 	/* Create a parallel context. */
-	pcxt = CreateParallelContext(ParallelQueryMain, nworkers);
+	pcxt = CreateParallelContext("postgres", "ParallelQueryMain", nworkers);
 	pei->pcxt = pcxt;
 
 	/*
@@ -429,7 +446,7 @@ ExecInitParallelPlan(PlanState *planstate, EState *estate, int nworkers)
 
 	/* Estimate space for tuple queues. */
 	shm_toc_estimate_chunk(&pcxt->estimator,
-						mul_size(PARALLEL_TUPLE_QUEUE_SIZE, pcxt->nworkers));
+						   mul_size(PARALLEL_TUPLE_QUEUE_SIZE, pcxt->nworkers));
 	shm_toc_estimate_keys(&pcxt->estimator, 1);
 
 	/*
@@ -487,7 +504,7 @@ ExecInitParallelPlan(PlanState *planstate, EState *estate, int nworkers)
 
 	/* Allocate space for each worker's BufferUsage; no need to initialize. */
 	bufusage_space = shm_toc_allocate(pcxt->toc,
-							  mul_size(sizeof(BufferUsage), pcxt->nworkers));
+									  mul_size(sizeof(BufferUsage), pcxt->nworkers));
 	shm_toc_insert(pcxt->toc, PARALLEL_KEY_BUFFER_USAGE, bufusage_space);
 	pei->buffer_usage = bufusage_space;
 
@@ -566,7 +583,7 @@ ExecInitParallelPlan(PlanState *planstate, EState *estate, int nworkers)
  */
 static bool
 ExecParallelRetrieveInstrumentation(PlanState *planstate,
-							  SharedExecutorInstrumentation *instrumentation)
+									SharedExecutorInstrumentation *instrumentation)
 {
 	Instrumentation *instrument;
 	int			i;
@@ -591,9 +608,9 @@ ExecParallelRetrieveInstrumentation(PlanState *planstate,
 	/*
 	 * Also store the per-worker detail.
 	 *
-	 * Worker instrumentation should be allocated in the same context as
-	 * the regular instrumentation information, which is the per-query
-	 * context. Switch into per-query memory context.
+	 * Worker instrumentation should be allocated in the same context as the
+	 * regular instrumentation information, which is the per-query context.
+	 * Switch into per-query memory context.
 	 */
 	oldcontext = MemoryContextSwitchTo(planstate->state->es_query_cxt);
 	ibytes = mul_size(instrumentation->num_workers, sizeof(Instrumentation));
@@ -667,7 +684,7 @@ ExecParallelGetReceiver(dsm_segment *seg, shm_toc *toc)
 	char	   *mqspace;
 	shm_mq	   *mq;
 
-	mqspace = shm_toc_lookup(toc, PARALLEL_KEY_TUPLE_QUEUE);
+	mqspace = shm_toc_lookup(toc, PARALLEL_KEY_TUPLE_QUEUE, false);
 	mqspace += ParallelWorkerNumber * PARALLEL_TUPLE_QUEUE_SIZE;
 	mq = (shm_mq *) mqspace;
 	shm_mq_set_sender(mq, MyProc);
@@ -688,14 +705,14 @@ ExecParallelGetQueryDesc(shm_toc *toc, DestReceiver *receiver,
 	char	   *queryString;
 
 	/* Get the query string from shared memory */
-	queryString = shm_toc_lookup(toc, PARALLEL_KEY_QUERY_TEXT);
+	queryString = shm_toc_lookup(toc, PARALLEL_KEY_QUERY_TEXT, false);
 
 	/* Reconstruct leader-supplied PlannedStmt. */
-	pstmtspace = shm_toc_lookup(toc, PARALLEL_KEY_PLANNEDSTMT);
+	pstmtspace = shm_toc_lookup(toc, PARALLEL_KEY_PLANNEDSTMT, false);
 	pstmt = (PlannedStmt *) stringToNode(pstmtspace);
 
 	/* Reconstruct ParamListInfo. */
-	paramspace = shm_toc_lookup(toc, PARALLEL_KEY_PARAMS);
+	paramspace = shm_toc_lookup(toc, PARALLEL_KEY_PARAMS, false);
 	paramLI = RestoreParamList(&paramspace);
 
 	/*
@@ -709,7 +726,7 @@ ExecParallelGetQueryDesc(shm_toc *toc, DestReceiver *receiver,
 	return CreateQueryDesc(pstmt,
 						   queryString,
 						   GetActiveSnapshot(), InvalidSnapshot,
-						   receiver, paramLI, instrument_options);
+						   receiver, paramLI, NULL, instrument_options);
 }
 
 /*
@@ -718,7 +735,7 @@ ExecParallelGetQueryDesc(shm_toc *toc, DestReceiver *receiver,
  */
 static bool
 ExecParallelReportInstrumentation(PlanState *planstate,
-							  SharedExecutorInstrumentation *instrumentation)
+								  SharedExecutorInstrumentation *instrumentation)
 {
 	int			i;
 	int			plan_node_id = planstate->plan->plan_node_id;
@@ -787,7 +804,7 @@ ExecParallelInitializeWorker(PlanState *planstate, shm_toc *toc)
 				break;
 			case T_BitmapHeapScanState:
 				ExecBitmapHeapInitializeWorker(
-									 (BitmapHeapScanState *) planstate, toc);
+											   (BitmapHeapScanState *) planstate, toc);
 				break;
 			default:
 				break;
@@ -813,7 +830,7 @@ ExecParallelInitializeWorker(PlanState *planstate, shm_toc *toc)
  * to do this are also stored in the dsm_segment and can be accessed through
  * the shm_toc.
  */
-static void
+void
 ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 {
 	BufferUsage *buffer_usage;
@@ -826,7 +843,7 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 
 	/* Set up DestReceiver, SharedExecutorInstrumentation, and QueryDesc. */
 	receiver = ExecParallelGetReceiver(seg, toc);
-	instrumentation = shm_toc_lookup(toc, PARALLEL_KEY_INSTRUMENTATION);
+	instrumentation = shm_toc_lookup(toc, PARALLEL_KEY_INSTRUMENTATION, true);
 	if (instrumentation != NULL)
 		instrument_options = instrumentation->instrument_options;
 	queryDesc = ExecParallelGetQueryDesc(toc, receiver, instrument_options);
@@ -841,7 +858,7 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 	InstrStartParallelQuery();
 
 	/* Attach to the dynamic shared memory area. */
-	area_space = shm_toc_lookup(toc, PARALLEL_KEY_DSA);
+	area_space = shm_toc_lookup(toc, PARALLEL_KEY_DSA, false);
 	area = dsa_attach_in_place(area_space, seg);
 
 	/* Start up the executor */
@@ -852,13 +869,13 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 	ExecParallelInitializeWorker(queryDesc->planstate, toc);
 
 	/* Run the plan */
-	ExecutorRun(queryDesc, ForwardScanDirection, 0L);
+	ExecutorRun(queryDesc, ForwardScanDirection, 0L, true);
 
 	/* Shut down the executor */
 	ExecutorFinish(queryDesc);
 
 	/* Report buffer usage during parallel execution. */
-	buffer_usage = shm_toc_lookup(toc, PARALLEL_KEY_BUFFER_USAGE);
+	buffer_usage = shm_toc_lookup(toc, PARALLEL_KEY_BUFFER_USAGE, false);
 	InstrEndParallelQuery(&buffer_usage[ParallelWorkerNumber]);
 
 	/* Report instrumentation data if any instrumentation options are set. */

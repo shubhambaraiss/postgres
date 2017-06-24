@@ -19,11 +19,11 @@
 #include "nodes/parsenodes.h"
 
 extern ObjectAddress CreateSubscription(CreateSubscriptionStmt *stmt,
-										bool isTopLevel);
+				   bool isTopLevel);
 extern ObjectAddress AlterSubscription(AlterSubscriptionStmt *stmt);
 extern void DropSubscription(DropSubscriptionStmt *stmt, bool isTopLevel);
 
 extern ObjectAddress AlterSubscriptionOwner(const char *name, Oid newOwnerId);
 extern void AlterSubscriptionOwner_oid(Oid subid, Oid newOwnerId);
 
-#endif   /* SUBSCRIPTIONCMDS_H */
+#endif							/* SUBSCRIPTIONCMDS_H */

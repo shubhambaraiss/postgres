@@ -17,7 +17,7 @@ dnl Read the Autoconf manual for details.
 dnl
 m4_pattern_forbid(^PGAC_)dnl to catch undefined macros
 
-AC_INIT([PostgreSQL], [10devel], [pgsql-bugs@postgresql.org])
+AC_INIT([PostgreSQL], [10beta1], [pgsql-bugs@postgresql.org])
 
 m4_if(m4_defn([m4_PACKAGE_VERSION]), [2.69], [], [m4_fatal([Autoconf version 2.69 is required.
 Untested combinations of 'autoconf' and PostgreSQL versions are not
@@ -358,7 +358,11 @@ case ${wal_segsize} in
  16) ;;
  32) ;;
  64) ;;
-  *) AC_MSG_ERROR([Invalid WAL segment size. Allowed values are 1,2,4,8,16,32,64.])
+ 128) ;;
+ 256) ;;
+ 512) ;;
+ 1024) ;;
+  *) AC_MSG_ERROR([Invalid WAL segment size. Allowed values are 1,2,4,8,16,32,64,128,256,512,1024.])
 esac
 AC_MSG_RESULT([${wal_segsize}MB])
 
@@ -612,6 +616,19 @@ if test "$enable_thread_safety" = yes; then
 fi
 AC_MSG_RESULT([$enable_thread_safety])
 AC_SUBST(enable_thread_safety)
+
+#
+# ICU
+#
+AC_MSG_CHECKING([whether to build with ICU support])
+PGAC_ARG_BOOL(with, icu, no, [build with ICU support],
+              [AC_DEFINE([USE_ICU], 1, [Define to build with ICU support. (--with-icu)])])
+AC_MSG_RESULT([$with_icu])
+AC_SUBST(with_icu)
+
+if test "$with_icu" = yes; then
+  PKG_CHECK_MODULES(ICU, icu-uc icu-i18n)
+fi
 
 #
 # Optionally build Tcl modules (PL/Tcl)
@@ -1162,7 +1179,7 @@ AC_SUBST(UUID_LIBS)
 ## Header files
 ##
 
-AC_CHECK_HEADERS([atomic.h crypt.h dld.h fp_class.h getopt.h ieeefp.h ifaddrs.h langinfo.h mbarrier.h poll.h sys/epoll.h sys/ipc.h sys/poll.h sys/pstat.h sys/resource.h sys/select.h sys/sem.h sys/shm.h sys/sockio.h sys/tas.h sys/un.h termios.h ucred.h utime.h wchar.h wctype.h])
+AC_CHECK_HEADERS([atomic.h crypt.h dld.h fp_class.h getopt.h ieeefp.h ifaddrs.h langinfo.h mbarrier.h poll.h sys/epoll.h sys/ipc.h sys/pstat.h sys/resource.h sys/select.h sys/sem.h sys/shm.h sys/sockio.h sys/tas.h sys/un.h termios.h ucred.h utime.h wchar.h wctype.h])
 
 # On BSD, test for net/if.h will fail unless sys/socket.h
 # is included first.
@@ -1317,11 +1334,13 @@ AC_C_FLEXIBLE_ARRAY_MEMBER
 PGAC_C_SIGNED
 PGAC_C_FUNCNAME_SUPPORT
 PGAC_C_STATIC_ASSERT
+PGAC_C_TYPEOF
 PGAC_C_TYPES_COMPATIBLE
 PGAC_C_BUILTIN_BSWAP32
 PGAC_C_BUILTIN_BSWAP64
 PGAC_C_BUILTIN_CONSTANT_P
 PGAC_C_BUILTIN_UNREACHABLE
+PGAC_C_COMPUTED_GOTO
 PGAC_C_VA_ARGS
 PGAC_STRUCT_TIMEZONE
 PGAC_UNION_SEMUN
@@ -1633,6 +1652,28 @@ fi
 
 AC_CHECK_FUNCS([strtoll strtoq], [break])
 AC_CHECK_FUNCS([strtoull strtouq], [break])
+
+if test "$with_icu" = yes; then
+  # ICU functions are macros, so we need to do this the long way.
+
+  # ucol_strcollUTF8() appeared in ICU 50.
+  AC_CACHE_CHECK([for ucol_strcollUTF8], [pgac_cv_func_ucol_strcollUTF8],
+[ac_save_CPPFLAGS=$CPPFLAGS
+CPPFLAGS="$ICU_CFLAGS $CPPFLAGS"
+ac_save_LIBS=$LIBS
+LIBS="$ICU_LIBS $LIBS"
+AC_LINK_IFELSE([AC_LANG_PROGRAM(
+[#include <unicode/ucol.h>
+],
+[ucol_strcollUTF8(NULL, NULL, 0, NULL, 0, NULL);])],
+[pgac_cv_func_ucol_strcollUTF8=yes],
+[pgac_cv_func_ucol_strcollUTF8=no])
+CPPFLAGS=$ac_save_CPPFLAGS
+LIBS=$ac_save_LIBS])
+  if test "$pgac_cv_func_ucol_strcollUTF8" = yes ; then
+    AC_DEFINE([HAVE_UCOL_STRCOLLUTF8], 1, [Define to 1 if you have the `ucol_strcollUTF8' function.])
+  fi
+fi
 
 # Lastly, restore full LIBS list and check for readline/libedit symbols
 LIBS="$LIBS_including_readline"
@@ -2076,14 +2117,12 @@ fi
 # Check for DocBook and tools
 #
 PGAC_PROG_NSGMLS
-PGAC_PROG_JADE
 PGAC_CHECK_DOCBOOK(4.2)
-PGAC_PATH_DOCBOOK_STYLESHEETS
-PGAC_PATH_COLLATEINDEX
 AC_CHECK_PROGS(DBTOEPUB, dbtoepub)
 AC_CHECK_PROGS(XMLLINT, xmllint)
 AC_CHECK_PROGS(XSLTPROC, xsltproc)
 AC_CHECK_PROGS(OSX, [osx sgml2xml sx])
+AC_CHECK_PROGS(FOP, fop)
 
 #
 # Check for test tools
@@ -2096,6 +2135,9 @@ if test "$enable_tap_tests" = yes; then
   if test -z "$PERL"; then
     AC_MSG_ERROR([Perl not found])
   fi
+  # Check for necessary modules
+  AX_PROG_PERL_MODULES(IPC::Run, ,
+    AC_MSG_ERROR([Perl module IPC::Run is required to run TAP tests]))
 fi
 
 # Thread testing

@@ -190,13 +190,13 @@ SlabContextCreate(MemoryContext parent,
 	Size		freelistSize;
 	SlabContext *slab;
 
-	StaticAssertStmt(offsetof(SlabChunk, slab) +sizeof(MemoryContext) ==
+	StaticAssertStmt(offsetof(SlabChunk, slab) + sizeof(MemoryContext) ==
 					 MAXALIGN(sizeof(SlabChunk)),
 					 "padding calculation in SlabChunk is wrong");
 
-	/* otherwise the linked list inside freed chunk isn't guaranteed to fit */
-	StaticAssertStmt(MAXIMUM_ALIGNOF >= sizeof(int),
-					 "MAXALIGN too small to fit int32");
+	/* Make sure the linked list node fits inside a freed chunk */
+	if (chunkSize < sizeof(int))
+		chunkSize = sizeof(int);
 
 	/* chunk, including SLAB header (both addresses nicely aligned) */
 	fullChunkSize = MAXALIGN(sizeof(SlabChunk) + MAXALIGN(chunkSize));
@@ -221,7 +221,7 @@ SlabContextCreate(MemoryContext parent,
 	/* Do the type-independent part of context creation */
 	slab = (SlabContext *)
 		MemoryContextCreate(T_SlabContext,
-							(offsetof(SlabContext, freelist) +freelistSize),
+							(offsetof(SlabContext, freelist) + freelistSize),
 							&SlabMethods,
 							parent,
 							name);
@@ -403,7 +403,7 @@ SlabAlloc(MemoryContext context, Size size)
 	 * Remove the chunk from the freelist head. The index of the next free
 	 * chunk is stored in the chunk itself.
 	 */
-	VALGRIND_MAKE_MEM_DEFINED(chunk, SlabChunkGetPointer(chunk));
+	VALGRIND_MAKE_MEM_DEFINED(SlabChunkGetPointer(chunk), sizeof(int32));
 	block->firstFreeChunk = *(int32 *) SlabChunkGetPointer(chunk);
 
 	Assert(block->firstFreeChunk >= 0);
@@ -725,6 +725,7 @@ SlabCheck(MemoryContext context)
 
 				/* read index of the next free chunk */
 				chunk = SlabBlockGetChunk(slab, block, idx);
+				VALGRIND_MAKE_MEM_DEFINED(SlabChunkGetPointer(chunk), sizeof(int32));
 				idx = *(int32 *) SlabChunkGetPointer(chunk);
 			}
 
@@ -763,4 +764,4 @@ SlabCheck(MemoryContext context)
 	}
 }
 
-#endif   /* MEMORY_CONTEXT_CHECKING */
+#endif							/* MEMORY_CONTEXT_CHECKING */

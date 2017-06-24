@@ -22,7 +22,7 @@
 
 static void usage(void);
 static void check_required_directory(char **dirpath, char **configpath,
-				   char *envVarName, char *cmdLineOption, char *description);
+						 char *envVarName, char *cmdLineOption, char *description);
 #define FIX_DEFAULT_READ_ONLY "-c default_transaction_read_only=false"
 
 
@@ -218,7 +218,7 @@ parseCommandLine(int argc, char *argv[])
 
 		/* Start with newline because we might be appending to a file. */
 		fprintf(fp, "\n"
-		"-----------------------------------------------------------------\n"
+				"-----------------------------------------------------------------\n"
 				"  pg_upgrade run on %s"
 				"-----------------------------------------------------------------\n\n",
 				ctime(&run_time));
@@ -478,7 +478,7 @@ get_sock_dir(ClusterInfo *cluster, bool live_check)
 				pg_fatal("Cannot open file %s: %m\n", filename);
 
 			for (lineno = 1;
-			   lineno <= Max(LOCK_FILE_LINE_PORT, LOCK_FILE_LINE_SOCKET_DIR);
+				 lineno <= Max(LOCK_FILE_LINE_PORT, LOCK_FILE_LINE_SOCKET_DIR);
 				 lineno++)
 			{
 				if (fgets(line, sizeof(line), fp) == NULL)

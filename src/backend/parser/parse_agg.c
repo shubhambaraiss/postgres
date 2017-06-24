@@ -640,15 +640,15 @@ check_agg_arguments(ParseState *pstate,
 					(errcode(ERRCODE_GROUPING_ERROR),
 					 errmsg("outer-level aggregate cannot contain a lower-level variable in its direct arguments"),
 					 parser_errposition(pstate,
-									 locate_var_of_level((Node *) directargs,
-													context.min_varlevel))));
+										locate_var_of_level((Node *) directargs,
+															context.min_varlevel))));
 		if (context.min_agglevel >= 0 && context.min_agglevel <= agglevel)
 			ereport(ERROR,
 					(errcode(ERRCODE_GROUPING_ERROR),
 					 errmsg("aggregate function calls cannot be nested"),
 					 parser_errposition(pstate,
-									 locate_agg_of_level((Node *) directargs,
-													context.min_agglevel))));
+										locate_agg_of_level((Node *) directargs,
+															context.min_agglevel))));
 	}
 	return agglevel;
 }
@@ -705,6 +705,14 @@ check_agg_arguments_walker(Node *node,
 		}
 		/* Continue and descend into subtree */
 	}
+	/* We can throw error on sight for a set-returning function */
+	if ((IsA(node, FuncExpr) &&((FuncExpr *) node)->funcretset) ||
+		(IsA(node, OpExpr) &&((OpExpr *) node)->opretset))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("aggregate function calls cannot contain set-returning function calls"),
+				 errhint("You might be able to move the set-returning function into a LATERAL FROM item."),
+				 parser_errposition(context->pstate, exprLocation(node))));
 	/* We can throw error on sight for a window function */
 	if (IsA(node, WindowFunc))
 		ereport(ERROR,
@@ -763,7 +771,7 @@ transformWindowFuncCall(ParseState *pstate, WindowFunc *wfunc,
 				(errcode(ERRCODE_WINDOWING_ERROR),
 				 errmsg("window function calls cannot be nested"),
 				 parser_errposition(pstate,
-								  locate_windowfunc((Node *) wfunc->args))));
+									locate_windowfunc((Node *) wfunc->args))));
 
 	/*
 	 * Check to see if the window function is in an invalid place within the
@@ -1008,8 +1016,8 @@ parseCheckAggregates(ParseState *pstate, Query *qry)
 					 errmsg("too many grouping sets present (maximum 4096)"),
 					 parser_errposition(pstate,
 										qry->groupClause
-									? exprLocation((Node *) qry->groupClause)
-							   : exprLocation((Node *) qry->groupingSets))));
+										? exprLocation((Node *) qry->groupClause)
+										: exprLocation((Node *) qry->groupingSets))));
 
 		/*
 		 * The intersection will often be empty, so help things along by
@@ -1087,7 +1095,7 @@ parseCheckAggregates(ParseState *pstate, Query *qry)
 		root->hasJoinRTEs = true;
 
 		groupClauses = (List *) flatten_join_alias_vars(root,
-													  (Node *) groupClauses);
+														(Node *) groupClauses);
 	}
 
 	/*
@@ -1302,7 +1310,7 @@ check_ungrouped_columns_walker(Node *node,
 					gvar->varno == var->varno &&
 					gvar->varattno == var->varattno &&
 					gvar->varlevelsup == 0)
-					return false;		/* acceptable, we're okay */
+					return false;	/* acceptable, we're okay */
 			}
 		}
 

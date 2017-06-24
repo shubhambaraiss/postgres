@@ -532,10 +532,10 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-         Specifies the configuration file for
-         <xref linkend="auth-username-maps"> user name mapping
+         Specifies the configuration file for user name mapping
          (customarily called <filename>pg_ident.conf</>).
          This parameter can only be set at server start.
+         See also <xref linkend="auth-username-maps">.
        </para>
       </listitem>
      </varlistentry>
@@ -1187,16 +1187,18 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        When a password is specified in <xref linkend="sql-createuser"> or
-        <xref linkend="sql-alterrole"> without writing either <literal>ENCRYPTED</>
-        or <literal>UNENCRYPTED</>, this parameter determines whether the
-        password is to be encrypted. The default value is <literal>md5</>, which
-        stores the password as an MD5 hash. Setting this to <literal>plain</> stores
-        it in plaintext. <literal>on</> and <literal>off</> are also accepted, as
-        aliases for <literal>md5</> and <literal>plain</>, respectively.  Setting
-        this parameter to <literal>scram</> will encrypt the password with
+        When a password is specified in <xref linkend="sql-createrole"> or
+        <xref linkend="sql-alterrole">, this parameter determines the algorithm
+        to use to encrypt the password. The default value is <literal>md5</>,
+        which stores the password as an MD5 hash (<literal>on</> is also
+        accepted, as alias for <literal>md5</>). Setting this parameter to
+        <literal>scram-sha-256</> will encrypt the password with SCRAM-SHA-256.
+       </para>
+       <para>
+        Note that older clients might lack support for the SCRAM authentication
+        mechanism, and hence not work with passwords encrypted with
         SCRAM-SHA-256.
-       </para>       
+       </para>
       </listitem>
      </varlistentry>
 
@@ -1906,10 +1908,10 @@ include_dir 'conf.d'
        <listitem>
         <para>
          Whenever more than <varname>bgwriter_flush_after</varname> bytes have
-         been written by the bgwriter, attempt to force the OS to issue these
+         been written by the background writer, attempt to force the OS to issue these
          writes to the underlying storage.  Doing so will limit the amount of
          dirty data in the kernel's page cache, reducing the likelihood of
-         stalls when an fsync is issued at the end of a checkpoint, or when
+         stalls when an <function>fsync</function> is issued at the end of a checkpoint, or when
          the OS writes data back in larger batches in the background.  Often
          that will result in greatly reduced transaction latency, but there
          also are some cases, especially with workloads that are bigger than
@@ -2027,7 +2029,7 @@ include_dir 'conf.d'
          pool of processes established by
          <xref linkend="guc-max-worker-processes">, limited by
          <xref linkend="guc-max-parallel-workers">.  Note that the requested
-         number of workers may not actually be available at runtime.  If this
+         number of workers may not actually be available at run time.  If this
          occurs, the plan will run with fewer workers than expected, which may
          be inefficient.  The default value is 2.  Setting this value to 0
          disables parallel query execution.
@@ -2088,7 +2090,7 @@ include_dir 'conf.d'
          been written by a single backend, attempt to force the OS to issue
          these writes to the underlying storage.  Doing so will limit the
          amount of dirty data in the kernel's page cache, reducing the
-         likelihood of stalls when an fsync is issued at the end of a
+         likelihood of stalls when an <function>fsync</function> is issued at the end of a
          checkpoint, or when the OS writes data back in larger batches in the
          background.  Often that will result in greatly reduced transaction
          latency, but there also are some cases, especially with workloads
@@ -2268,7 +2270,7 @@ include_dir 'conf.d'
         For reliable recovery when changing <varname>fsync</varname>
         off to on, it is necessary to force all modified buffers in the
         kernel to durable storage.  This can be done while the cluster
-        is shutdown or while fsync is on by running <command>initdb
+        is shutdown or while <varname>fsync</varname> is on by running <command>initdb
         --sync-only</command>, running <command>sync</>, unmounting the
         file system, or rebooting the server.
        </para>
@@ -2698,7 +2700,7 @@ include_dir 'conf.d'
         have been written while performing a checkpoint, attempt to force the
         OS to issue these writes to the underlying storage.  Doing so will
         limit the amount of dirty data in the kernel's page cache, reducing
-        the likelihood of stalls when an fsync is issued at the end of the
+        the likelihood of stalls when an <function>fsync</function> is issued at the end of the
         checkpoint, or when the OS writes data back in larger batches in the
         background.  Often that will result in greatly reduced transaction
         latency, but there also are some cases, especially with workloads
@@ -3227,7 +3229,7 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
        <para>
         Specifies whether or not you can connect and run queries during
         recovery, as described in <xref linkend="hot-standby">.
-        The default value is <literal>off</literal>.
+        The default value is <literal>on</literal>.
         This parameter can only be set at server start. It only has effect
         during archive recovery or in standby mode.
        </para>
@@ -3310,7 +3312,7 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
        to the primary or upstream standby, where it can be seen using the
        <link linkend="monitoring-stats-views-table">
        <literal>pg_stat_replication</></link> view.  The standby will report
-       the last transaction log position it has written, the last position it
+       the last write-ahead log location it has written, the last position it
        has flushed to disk, and the last position it has applied.
        This parameter's
        value is the maximum interval, in seconds, between reports.  Updates are
@@ -3449,6 +3451,31 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-max-sync-workers-per-subscription" xreflabel="max_sync_workers_per_subscription">
+      <term><varname>max_sync_workers_per_subscription</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>max_sync_workers_per_subscription</> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Maximum number of synchronization workers per subscription. This
+        parameter controls the amount of parallelism of the initial data copy
+        during the subscription initialization or when new tables are added.
+       </para>
+       <para>
+        Currently, there can be only one synchronization worker per table.
+       </para>
+       <para>
+        The synchronization workers are taken from the pool defined by
+        <varname>max_logical_replication_workers</varname>.
+       </para>
+       <para>
+        The default value is 2.
+       </para>
+      </listitem>
+     </varlistentry>
+
      </variablelist>
     </sect2>
 
@@ -3468,7 +3495,7 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
        of these configuration parameters to force the optimizer to
        choose a different plan.
        Better ways to improve the quality of the
-       plans chosen by the optimizer include adjusting the planer cost
+       plans chosen by the optimizer include adjusting the planner cost
        constants (see <xref linkend="runtime-config-query-constants">),
        running <xref linkend="sql-analyze"> manually, increasing
        the value of the <xref
@@ -4338,8 +4365,8 @@ SELECT * FROM parent WHERE key = 2400;
         find the logs currently in use by the instance. Here is an example of
         this file's content:
 <programlisting>
-stderr pg_log/postgresql.log
-csvlog pg_log/postgresql.csv
+stderr log/postgresql.log
+csvlog log/postgresql.csv
 </programlisting>
 
         <filename>current_logfiles</filename> is recreated when a new log file
@@ -4441,7 +4468,7 @@ local0.*    /var/log/postgresql
         cluster data directory.
         This parameter can only be set in the <filename>postgresql.conf</>
         file or on the server command line.
-        The default is <literal>pg_log</literal>.
+        The default is <literal>log</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -6004,7 +6031,7 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
 
        <para>
         Vacuum also allows removal of old files from the
-        <filename>pg_clog</> subdirectory, which is why the default
+        <filename>pg_xact</> subdirectory, which is why the default
         is a relatively low 200 million transactions.
         This parameter can only be set at server start, but the setting
         can be reduced for individual tables by
@@ -6977,12 +7004,6 @@ SET XML OPTION { DOCUMENT | CONTENT };
      </para>
 
      <para>
-      For each parameter, if more than one library is to be loaded, separate
-      their names with commas.  All library names are converted to lower case
-      unless double-quoted.
-     </para>
-
-     <para>
       Only shared libraries specifically intended to be used with PostgreSQL
       can be loaded this way.  Every PostgreSQL-supported library has
       a <quote>magic block</> that is checked to guarantee compatibility.  For
@@ -7010,6 +7031,10 @@ SET XML OPTION { DOCUMENT | CONTENT };
        <para>
         This variable specifies one or more shared libraries that are to be
         preloaded at connection start.
+        It contains a comma-separated list of library names, where each name
+        is interpreted as for the <xref linkend="SQL-LOAD"> command.
+        Whitespace between entries is ignored; surround a library name with
+        double quotes if you need to include whitespace or commas in the name.
         The parameter value only takes effect at the start of the connection.
         Subsequent changes have no effect.  If a specified library is not
         found, the connection attempt will fail.
@@ -7056,10 +7081,15 @@ SET XML OPTION { DOCUMENT | CONTENT };
       <listitem>
        <para>
         This variable specifies one or more shared libraries that are to be
-        preloaded at connection start.  Only superusers can change this setting.
+        preloaded at connection start.
+        It contains a comma-separated list of library names, where each name
+        is interpreted as for the <xref linkend="SQL-LOAD"> command.
+        Whitespace between entries is ignored; surround a library name with
+        double quotes if you need to include whitespace or commas in the name.
         The parameter value only takes effect at the start of the connection.
         Subsequent changes have no effect.  If a specified library is not
         found, the connection attempt will fail.
+        Only superusers can change this setting.
        </para>
 
        <para>
@@ -7093,9 +7123,13 @@ SET XML OPTION { DOCUMENT | CONTENT };
       <listitem>
        <para>
         This variable specifies one or more shared libraries to be preloaded at
-        server start.  This parameter can only be set at server
-        start.  If a specified library is not found, the server will fail to
-        start.
+        server start.
+        It contains a comma-separated list of library names, where each name
+        is interpreted as for the <xref linkend="SQL-LOAD"> command.
+        Whitespace between entries is ignored; surround a library name with
+        double quotes if you need to include whitespace or commas in the name.
+        This parameter can only be set at server start.  If a specified
+        library is not found, the server will fail to start.
        </para>
 
        <para>
@@ -7312,7 +7346,43 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         tables in a single serializable transaction. This parameter can
         only be set at server start.
        </para>
+      </listitem>
+     </varlistentry>
 
+     <varlistentry id="guc-max-pred-locks-per-relation" xreflabel="max_pred_locks_per_relation">
+      <term><varname>max_pred_locks_per_relation</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>max_pred_locks_per_relation</> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        This controls how many pages or tuples of a single relation can be
+        predicate-locked before the lock is promoted to covering the whole
+        relation.  Values greater than or equal to zero mean an absolute
+        limit, while negative values
+        mean <xref linkend="guc-max-pred-locks-per-transaction"> divided by
+        the absolute value of this setting.  The default is -2, which keeps
+        the behavior from previous versions of <productname>PostgreSQL</>.
+        This parameter can only be set in the <filename>postgresql.conf</>
+        file or on the server command line.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-max-pred-locks-per-page" xreflabel="max_pred_locks_per_page">
+      <term><varname>max_pred_locks_per_page</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>max_pred_locks_per_page</> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        This controls how many rows on a single page can be predicate-locked
+        before the lock is promoted to covering the whole page.  The default
+        is 2.  This parameter can only be set in
+        the <filename>postgresql.conf</> file or on the server command line.
+       </para>
       </listitem>
      </varlistentry>
 

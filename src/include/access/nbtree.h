@@ -151,9 +151,8 @@ typedef struct BTMetaPageData
  *	within a level). - vadim 04/09/97
  */
 #define BTTidSame(i1, i2)	\
-	( (i1).ip_blkid.bi_hi == (i2).ip_blkid.bi_hi && \
-	  (i1).ip_blkid.bi_lo == (i2).ip_blkid.bi_lo && \
-	  (i1).ip_posid == (i2).ip_posid )
+	((ItemPointerGetBlockNumber(&(i1)) == ItemPointerGetBlockNumber(&(i2))) && \
+	 (ItemPointerGetOffsetNumber(&(i1)) == ItemPointerGetOffsetNumber(&(i2))))
 #define BTEntrySame(i1, i2) \
 	BTTidSame((i1)->t_tid, (i2)->t_tid)
 
@@ -177,6 +176,7 @@ typedef struct BTMetaPageData
 #define P_ISLEAF(opaque)		((opaque)->btpo_flags & BTP_LEAF)
 #define P_ISROOT(opaque)		((opaque)->btpo_flags & BTP_ROOT)
 #define P_ISDELETED(opaque)		((opaque)->btpo_flags & BTP_DELETED)
+#define P_ISMETA(opaque)		((opaque)->btpo_flags & BTP_META)
 #define P_ISHALFDEAD(opaque)	((opaque)->btpo_flags & BTP_HALF_DEAD)
 #define P_IGNORE(opaque)		((opaque)->btpo_flags & (BTP_DELETED|BTP_HALF_DEAD))
 #define P_HAS_GARBAGE(opaque)	((opaque)->btpo_flags & BTP_HAS_GARBAGE)
@@ -421,9 +421,9 @@ typedef BTScanOpaqueData *BTScanOpaque;
  * to use bits 16-31 (see skey.h).  The uppermost bits are copied from the
  * index's indoption[] array entry for the index attribute.
  */
-#define SK_BT_REQFWD	0x00010000		/* required to continue forward scan */
-#define SK_BT_REQBKWD	0x00020000		/* required to continue backward scan */
-#define SK_BT_INDOPTION_SHIFT  24		/* must clear the above bits */
+#define SK_BT_REQFWD	0x00010000	/* required to continue forward scan */
+#define SK_BT_REQBKWD	0x00020000	/* required to continue backward scan */
+#define SK_BT_INDOPTION_SHIFT  24	/* must clear the above bits */
 #define SK_BT_DESC			(INDOPTION_DESC << SK_BT_INDOPTION_SHIFT)
 #define SK_BT_NULLS_FIRST	(INDOPTION_NULLS_FIRST << SK_BT_INDOPTION_SHIFT)
 
@@ -556,4 +556,4 @@ extern void _bt_spool(BTSpool *btspool, ItemPointer self,
 		  Datum *values, bool *isnull);
 extern void _bt_leafbuild(BTSpool *btspool, BTSpool *spool2);
 
-#endif   /* NBTREE_H */
+#endif							/* NBTREE_H */

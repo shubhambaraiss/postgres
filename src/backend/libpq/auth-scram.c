@@ -5,19 +5,50 @@
  *
  * See the following RFCs for more details:
  * - RFC 5802: https://tools.ietf.org/html/rfc5802
+ * - RFC 5803: https://tools.ietf.org/html/rfc5803
  * - RFC 7677: https://tools.ietf.org/html/rfc7677
  *
  * Here are some differences:
  *
  * - Username from the authentication exchange is not used. The client
  *	 should send an empty string as the username.
- * - Password is not processed with the SASLprep algorithm.
+ *
+ * - If the password isn't valid UTF-8, or contains characters prohibited
+ *	 by the SASLprep profile, we skip the SASLprep pre-processing and use
+ *	 the raw bytes in calculating the hash.
+ *
  * - Channel binding is not supported yet.
  *
- * The password stored in pg_authid consists of the salt, iteration count,
+ *
+ * The password stored in pg_authid consists of the iteration count, salt,
  * StoredKey and ServerKey.
  *
- * On error handling:
+ * SASLprep usage
+ * --------------
+ *
+ * One notable difference to the SCRAM specification is that while the
+ * specification dictates that the password is in UTF-8, and prohibits
+ * certain characters, we are more lenient.  If the password isn't a valid
+ * UTF-8 string, or contains prohibited characters, the raw bytes are used
+ * to calculate the hash instead, without SASLprep processing.  This is
+ * because PostgreSQL supports other encodings too, and the encoding being
+ * used during authentication is undefined (client_encoding isn't set until
+ * after authentication).  In effect, we try to interpret the password as
+ * UTF-8 and apply SASLprep processing, but if it looks invalid, we assume
+ * that it's in some other encoding.
+ *
+ * In the worst case, we misinterpret a password that's in a different
+ * encoding as being Unicode, because it happens to consists entirely of
+ * valid UTF-8 bytes, and we apply Unicode normalization to it.  As long
+ * as we do that consistently, that will not lead to failed logins.
+ * Fortunately, the UTF-8 byte sequences that are ignored by SASLprep
+ * don't correspond to any commonly used characters in any of the other
+ * supported encodings, so it should not lead to any significant loss in
+ * entropy, even if the normalization is incorrectly applied to a
+ * non-UTF-8 password.
+ *
+ * Error handling
+ * --------------
  *
  * Don't reveal user information to an unauthenticated client.  We don't
  * want an attacker to be able to probe whether a particular username is
@@ -37,6 +68,7 @@
  * to the encoding being used, whatever that is.  We cannot avoid that in
  * general, after logging in, but let's do what we can here.
  *
+ *
  * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -52,6 +84,7 @@
 #include "catalog/pg_authid.h"
 #include "catalog/pg_control.h"
 #include "common/base64.h"
+#include "common/saslprep.h"
 #include "common/scram-common.h"
 #include "common/sha2.h"
 #include "libpq/auth.h"
@@ -79,8 +112,8 @@ typedef struct
 
 	const char *username;		/* username from startup packet */
 
-	char	   *salt;			/* base64-encoded */
 	int			iterations;
+	char	   *salt;			/* base64-encoded */
 	uint8		StoredKey[SCRAM_KEY_LEN];
 	uint8		ServerKey[SCRAM_KEY_LEN];
 
@@ -114,13 +147,13 @@ static char *build_server_first_message(scram_state *state);
 static char *build_server_final_message(scram_state *state);
 static bool verify_client_proof(scram_state *state);
 static bool verify_final_nonce(scram_state *state);
-static bool parse_scram_verifier(const char *verifier, char **salt,
-					 int *iterations, uint8 *stored_key, uint8 *server_key);
-static void mock_scram_verifier(const char *username, char **salt, int *iterations,
-					uint8 *stored_key, uint8 *server_key);
+static bool parse_scram_verifier(const char *verifier, int *iterations,
+					 char **salt, uint8 *stored_key, uint8 *server_key);
+static void mock_scram_verifier(const char *username, int *iterations,
+					char **salt, uint8 *stored_key, uint8 *server_key);
 static bool is_scram_printable(char *p);
 static char *sanitize_char(char c);
-static char *scram_MockSalt(const char *username);
+static char *scram_mock_salt(const char *username);
 
 /*
  * pg_be_scram_init
@@ -129,80 +162,78 @@ static char *scram_MockSalt(const char *username);
  * needs to be called before doing any exchange.  It will be filled later
  * after the beginning of the exchange with verifier data.
  *
- * 'username' is the provided by the client.  'shadow_pass' is the role's
- * password verifier, from pg_authid.rolpassword.  If 'doomed' is true, the
- * authentication must fail, as if an incorrect password was given.
- * 'shadow_pass' may be NULL, when 'doomed' is set.
+ * 'username' is the username provided by the client in the startup message.
+ * 'shadow_pass' is the role's password verifier, from pg_authid.rolpassword.
+ * If 'shadow_pass' is NULL, we still perform an authentication exchange, but
+ * it will fail, as if an incorrect password was given.
  */
 void *
-pg_be_scram_init(const char *username, const char *shadow_pass, bool doomed)
+pg_be_scram_init(const char *username, const char *shadow_pass)
 {
 	scram_state *state;
-	int			password_type;
+	bool		got_verifier;
 
 	state = (scram_state *) palloc0(sizeof(scram_state));
 	state->state = SCRAM_AUTH_INIT;
 	state->username = username;
 
 	/*
-	 * Perform sanity checks on the provided password after catalog lookup.
-	 * The authentication is bound to fail if the lookup itself failed or if
-	 * the password stored is MD5-encrypted.  Authentication is possible for
-	 * users with a valid plain password though.
+	 * Parse the stored password verifier.
 	 */
-
-	if (shadow_pass == NULL || doomed)
-		password_type = -1;
-	else
-		password_type = get_password_type(shadow_pass);
-
-	if (password_type == PASSWORD_TYPE_SCRAM)
+	if (shadow_pass)
 	{
-		if (!parse_scram_verifier(shadow_pass, &state->salt, &state->iterations,
-								  state->StoredKey, state->ServerKey))
+		int			password_type = get_password_type(shadow_pass);
+
+		if (password_type == PASSWORD_TYPE_SCRAM_SHA_256)
+		{
+			if (parse_scram_verifier(shadow_pass, &state->iterations, &state->salt,
+									 state->StoredKey, state->ServerKey))
+				got_verifier = true;
+			else
+			{
+				/*
+				 * The password looked like a SCRAM verifier, but could not be
+				 * parsed.
+				 */
+				ereport(LOG,
+						(errmsg("invalid SCRAM verifier for user \"%s\"",
+								username)));
+				got_verifier = false;
+			}
+		}
+		else
 		{
 			/*
-			 * The password looked like a SCRAM verifier, but could not be
-			 * parsed.
+			 * The user doesn't have SCRAM verifier. (You cannot do SCRAM
+			 * authentication with an MD5 hash.)
 			 */
-			elog(LOG, "invalid SCRAM verifier for user \"%s\"", username);
-			doomed = true;
+			state->logdetail = psprintf(_("User \"%s\" does not have a valid SCRAM verifier."),
+										state->username);
+			got_verifier = false;
 		}
 	}
-	else if (password_type == PASSWORD_TYPE_PLAINTEXT)
-	{
-		char	   *verifier;
-
-		/*
-		 * The password provided is in plain format, in which case a fresh
-		 * SCRAM verifier can be generated and used for the rest of the
-		 * processing.
-		 */
-		verifier = scram_build_verifier(username, shadow_pass, 0);
-
-		(void) parse_scram_verifier(verifier, &state->salt, &state->iterations,
-									state->StoredKey, state->ServerKey);
-		pfree(verifier);
-	}
 	else
-		doomed = true;
-
-	if (doomed)
 	{
 		/*
-		 * We don't have a valid SCRAM verifier, nor could we generate one, or
-		 * the caller requested us to perform a dummy authentication.
-		 *
-		 * The authentication is bound to fail, but to avoid revealing
-		 * information to the attacker, go through the motions with a fake
-		 * SCRAM verifier, and fail as if the password was incorrect.
+		 * The caller requested us to perform a dummy authentication.  This is
+		 * considered normal, since the caller requested it, so don't set log
+		 * detail.
 		 */
-		state->logdetail = psprintf(_("User \"%s\" does not have a valid SCRAM verifier."),
-									state->username);
-		mock_scram_verifier(username, &state->salt, &state->iterations,
-							state->StoredKey, state->ServerKey);
+		got_verifier = false;
 	}
-	state->doomed = doomed;
+
+	/*
+	 * If the user did not have a valid SCRAM verifier, we still go through
+	 * the motions with a mock one, and fail as if the client supplied an
+	 * incorrect password.  This is to avoid revealing information to an
+	 * attacker.
+	 */
+	if (!got_verifier)
+	{
+		mock_scram_verifier(username, &state->iterations, &state->salt,
+							state->StoredKey, state->ServerKey);
+		state->doomed = true;
+	}
 
 	return state;
 }
@@ -210,8 +241,16 @@ pg_be_scram_init(const char *username, const char *shadow_pass, bool doomed)
 /*
  * Continue a SCRAM authentication exchange.
  *
- * The next message to send to client is saved in "output", for a length
- * of "outputlen".  In the case of an error, optionally store a palloc'd
+ * 'input' is the SCRAM payload sent by the client.  On the first call,
+ * 'input' contains the "Initial Client Response" that the client sent as
+ * part of the SASLInitialResponse message, or NULL if no Initial Client
+ * Response was given.  (The SASL specification distinguishes between an
+ * empty response and non-existing one.)  On subsequent calls, 'input'
+ * cannot be NULL.  For convenience in this function, the caller must
+ * ensure that there is a null terminator at input[inputlen].
+ *
+ * The next message to send to client is saved in 'output', for a length
+ * of 'outputlen'.  In the case of an error, optionally store a palloc'd
  * string at *logdetail that will be sent to the postmaster log (but not
  * the client).
  */
@@ -225,17 +264,34 @@ pg_be_scram_exchange(void *opaq, char *input, int inputlen,
 	*output = NULL;
 
 	/*
+	 * If the client didn't include an "Initial Client Response" in the
+	 * SASLInitialResponse message, send an empty challenge, to which the
+	 * client will respond with the same data that usually comes in the
+	 * Initial Client Response.
+	 */
+	if (input == NULL)
+	{
+		Assert(state->state == SCRAM_AUTH_INIT);
+
+		*output = pstrdup("");
+		*outputlen = 0;
+		return SASL_EXCHANGE_CONTINUE;
+	}
+
+	/*
 	 * Check that the input length agrees with the string length of the input.
 	 * We can ignore inputlen after this.
 	 */
 	if (inputlen == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 (errmsg("malformed SCRAM message (empty message)"))));
+				 errmsg("malformed SCRAM message"),
+				 errdetail("The message is empty.")));
 	if (inputlen != strlen(input))
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 (errmsg("malformed SCRAM message (length mismatch)"))));
+				 errmsg("malformed SCRAM message"),
+				 errdetail("Message length does not match input length.")));
 
 	switch (state->state)
 	{
@@ -267,13 +323,21 @@ pg_be_scram_exchange(void *opaq, char *input, int inputlen,
 			if (!verify_final_nonce(state))
 				ereport(ERROR,
 						(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					   (errmsg("invalid SCRAM response (nonce mismatch)"))));
+						 errmsg("invalid SCRAM response"),
+						 errdetail("Nonce does not match.")));
 
 			/*
 			 * Now check the final nonce and the client proof.
 			 *
 			 * If we performed a "mock" authentication that we knew would fail
 			 * from the get go, this is where we fail.
+			 *
+			 * The SCRAM specification includes an error code,
+			 * "invalid-proof", for authentication failure, but it also allows
+			 * erroring out in an application-specific way.  We choose to do
+			 * the latter, so that the error message for invalid password is
+			 * the same for all authentication methods.  The caller will call
+			 * ereport(), when we return SASL_EXCHANGE_FAILURE with no output.
 			 *
 			 * NB: the order of these checks is intentional.  We calculate the
 			 * client proof even in a mock authentication, even though it's
@@ -282,14 +346,6 @@ pg_be_scram_exchange(void *opaq, char *input, int inputlen,
 			 */
 			if (!verify_client_proof(state) || state->doomed)
 			{
-				/*
-				 * Signal invalid-proof, although the real reason might also
-				 * be e.g. that the password has expired, or the user doesn't
-				 * exist.  "e=other-error" might be more correct, but
-				 * "e=invalid-proof" is more likely to give a nice error
-				 * message to the user.
-				 */
-				*output = psprintf("e=invalid-proof");
 				result = SASL_EXCHANGE_FAILURE;
 				break;
 			}
@@ -319,71 +375,97 @@ pg_be_scram_exchange(void *opaq, char *input, int inputlen,
 /*
  * Construct a verifier string for SCRAM, stored in pg_authid.rolpassword.
  *
- * If iterations is 0, default number of iterations is used.  The result is
- * palloc'd, so caller is responsible for freeing it.
+ * The result is palloc'd, so caller is responsible for freeing it.
  */
 char *
-scram_build_verifier(const char *username, const char *password,
-					 int iterations)
+pg_be_scram_build_verifier(const char *password)
 {
-	uint8		keybuf[SCRAM_KEY_LEN + 1];
-	char		storedkey_hex[SCRAM_KEY_LEN * 2 + 1];
-	char		serverkey_hex[SCRAM_KEY_LEN * 2 + 1];
-	char		salt[SCRAM_SALT_LEN];
-	char	   *encoded_salt;
-	int			encoded_len;
+	char	   *prep_password = NULL;
+	pg_saslprep_rc rc;
+	char		saltbuf[SCRAM_DEFAULT_SALT_LEN];
+	char	   *result;
 
-	if (iterations <= 0)
-		iterations = SCRAM_ITERATIONS_DEFAULT;
+	/*
+	 * Normalize the password with SASLprep.  If that doesn't work, because
+	 * the password isn't valid UTF-8 or contains prohibited characters, just
+	 * proceed with the original password.  (See comments at top of file.)
+	 */
+	rc = pg_saslprep(password, &prep_password);
+	if (rc == SASLPREP_SUCCESS)
+		password = (const char *) prep_password;
 
-	if (!pg_backend_random(salt, SCRAM_SALT_LEN))
-	{
-		ereport(LOG,
+	/* Generate random salt */
+	if (!pg_backend_random(saltbuf, SCRAM_DEFAULT_SALT_LEN))
+		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("could not generate random salt")));
-		return NULL;
-	}
 
-	encoded_salt = palloc(pg_b64_enc_len(SCRAM_SALT_LEN) + 1);
-	encoded_len = pg_b64_encode(salt, SCRAM_SALT_LEN, encoded_salt);
-	encoded_salt[encoded_len] = '\0';
+	result = scram_build_verifier(saltbuf, SCRAM_DEFAULT_SALT_LEN,
+								  SCRAM_DEFAULT_ITERATIONS, password);
 
-	/* Calculate StoredKey, and encode it in hex */
-	scram_ClientOrServerKey(password, salt, SCRAM_SALT_LEN,
-							iterations, SCRAM_CLIENT_KEY_NAME, keybuf);
-	scram_H(keybuf, SCRAM_KEY_LEN, keybuf);		/* StoredKey */
-	(void) hex_encode((const char *) keybuf, SCRAM_KEY_LEN, storedkey_hex);
-	storedkey_hex[SCRAM_KEY_LEN * 2] = '\0';
-
-	/* And same for ServerKey */
-	scram_ClientOrServerKey(password, salt, SCRAM_SALT_LEN, iterations,
-							SCRAM_SERVER_KEY_NAME, keybuf);
-	(void) hex_encode((const char *) keybuf, SCRAM_KEY_LEN, serverkey_hex);
-	serverkey_hex[SCRAM_KEY_LEN * 2] = '\0';
-
-	return psprintf("scram-sha-256:%s:%d:%s:%s", encoded_salt, iterations, storedkey_hex, serverkey_hex);
-}
-
-
-/*
- * Check if given verifier can be used for SCRAM authentication.
- *
- * Returns true if it is a SCRAM verifier, and false otherwise.
- */
-bool
-is_scram_verifier(const char *verifier)
-{
-	char	   *salt = NULL;
-	int			iterations;
-	uint8		stored_key[SCRAM_KEY_LEN];
-	uint8		server_key[SCRAM_KEY_LEN];
-	bool		result;
-
-	result = parse_scram_verifier(verifier, &salt, &iterations, stored_key, server_key);
-	if (salt)
-		pfree(salt);
+	if (prep_password)
+		pfree(prep_password);
 
 	return result;
+}
+
+/*
+ * Verify a plaintext password against a SCRAM verifier.  This is used when
+ * performing plaintext password authentication for a user that has a SCRAM
+ * verifier stored in pg_authid.
+ */
+bool
+scram_verify_plain_password(const char *username, const char *password,
+							const char *verifier)
+{
+	char	   *encoded_salt;
+	char	   *salt;
+	int			saltlen;
+	int			iterations;
+	uint8		salted_password[SCRAM_KEY_LEN];
+	uint8		stored_key[SCRAM_KEY_LEN];
+	uint8		server_key[SCRAM_KEY_LEN];
+	uint8		computed_key[SCRAM_KEY_LEN];
+	char	   *prep_password = NULL;
+	pg_saslprep_rc rc;
+
+	if (!parse_scram_verifier(verifier, &iterations, &encoded_salt,
+							  stored_key, server_key))
+	{
+		/*
+		 * The password looked like a SCRAM verifier, but could not be parsed.
+		 */
+		ereport(LOG,
+				(errmsg("invalid SCRAM verifier for user \"%s\"", username)));
+		return false;
+	}
+
+	salt = palloc(pg_b64_dec_len(strlen(encoded_salt)));
+	saltlen = pg_b64_decode(encoded_salt, strlen(encoded_salt), salt);
+	if (saltlen == -1)
+	{
+		ereport(LOG,
+				(errmsg("invalid SCRAM verifier for user \"%s\"", username)));
+		return false;
+	}
+
+	/* Normalize the password */
+	rc = pg_saslprep(password, &prep_password);
+	if (rc == SASLPREP_SUCCESS)
+		password = prep_password;
+
+	/* Compute Server Key based on the user-supplied plaintext password */
+	scram_SaltedPassword(password, salt, saltlen, iterations, salted_password);
+	scram_ServerKey(salted_password, computed_key);
+
+	if (prep_password)
+		pfree(prep_password);
+
+	/*
+	 * Compare the verifier's Server Key with the one computed from the
+	 * user-supplied password.
+	 */
+	return memcmp(computed_key, server_key, SCRAM_KEY_LEN) == 0;
 }
 
 
@@ -393,60 +475,82 @@ is_scram_verifier(const char *verifier)
  * Returns true if the SCRAM verifier has been parsed, and false otherwise.
  */
 static bool
-parse_scram_verifier(const char *verifier, char **salt, int *iterations,
+parse_scram_verifier(const char *verifier, int *iterations, char **salt,
 					 uint8 *stored_key, uint8 *server_key)
 {
 	char	   *v;
 	char	   *p;
+	char	   *scheme_str;
+	char	   *salt_str;
+	char	   *iterations_str;
+	char	   *storedkey_str;
+	char	   *serverkey_str;
+	int			decoded_len;
+	char	   *decoded_salt_buf;
 
 	/*
 	 * The verifier is of form:
 	 *
-	 * scram-sha-256:<salt>:<iterations>:<storedkey>:<serverkey>
+	 * SCRAM-SHA-256$<iterations>:<salt>$<storedkey>:<serverkey>
 	 */
-	if (strncmp(verifier, "scram-sha-256:", strlen("scram-sha-256:")) != 0)
-		return false;
-
-	v = pstrdup(verifier + strlen("scram-sha-256:"));
-
-	/* salt */
-	if ((p = strtok(v, ":")) == NULL)
+	v = pstrdup(verifier);
+	if ((scheme_str = strtok(v, "$")) == NULL)
 		goto invalid_verifier;
-	*salt = pstrdup(p);
-
-	/* iterations */
-	if ((p = strtok(NULL, ":")) == NULL)
+	if ((iterations_str = strtok(NULL, ":")) == NULL)
 		goto invalid_verifier;
+	if ((salt_str = strtok(NULL, "$")) == NULL)
+		goto invalid_verifier;
+	if ((storedkey_str = strtok(NULL, ":")) == NULL)
+		goto invalid_verifier;
+	if ((serverkey_str = strtok(NULL, "")) == NULL)
+		goto invalid_verifier;
+
+	/* Parse the fields */
+	if (strcmp(scheme_str, "SCRAM-SHA-256") != 0)
+		goto invalid_verifier;
+
 	errno = 0;
-	*iterations = strtol(p, &p, SCRAM_ITERATION_LEN);
+	*iterations = strtol(iterations_str, &p, 10);
 	if (*p || errno != 0)
 		goto invalid_verifier;
 
-	/* storedkey */
-	if ((p = strtok(NULL, ":")) == NULL)
+	/*
+	 * Verify that the salt is in Base64-encoded format, by decoding it,
+	 * although we return the encoded version to the caller.
+	 */
+	decoded_salt_buf = palloc(pg_b64_dec_len(strlen(salt_str)));
+	decoded_len = pg_b64_decode(salt_str, strlen(salt_str), decoded_salt_buf);
+	if (decoded_len < 0)
 		goto invalid_verifier;
-	if (strlen(p) != SCRAM_KEY_LEN * 2)
+	*salt = pstrdup(salt_str);
+
+	/*
+	 * Decode StoredKey and ServerKey.
+	 */
+	if (pg_b64_dec_len(strlen(storedkey_str) != SCRAM_KEY_LEN))
+		goto invalid_verifier;
+	decoded_len = pg_b64_decode(storedkey_str, strlen(storedkey_str),
+								(char *) stored_key);
+	if (decoded_len != SCRAM_KEY_LEN)
 		goto invalid_verifier;
 
-	hex_decode(p, SCRAM_KEY_LEN * 2, (char *) stored_key);
-
-	/* serverkey */
-	if ((p = strtok(NULL, ":")) == NULL)
+	if (pg_b64_dec_len(strlen(serverkey_str) != SCRAM_KEY_LEN))
 		goto invalid_verifier;
-	if (strlen(p) != SCRAM_KEY_LEN * 2)
+	decoded_len = pg_b64_decode(serverkey_str, strlen(serverkey_str),
+								(char *) server_key);
+	if (decoded_len != SCRAM_KEY_LEN)
 		goto invalid_verifier;
-	hex_decode(p, SCRAM_KEY_LEN * 2, (char *) server_key);
 
-	pfree(v);
 	return true;
 
 invalid_verifier:
 	pfree(v);
+	*salt = NULL;
 	return false;
 }
 
 static void
-mock_scram_verifier(const char *username, char **salt, int *iterations,
+mock_scram_verifier(const char *username, int *iterations, char **salt,
 					uint8 *stored_key, uint8 *server_key)
 {
 	char	   *raw_salt;
@@ -454,14 +558,14 @@ mock_scram_verifier(const char *username, char **salt, int *iterations,
 	int			encoded_len;
 
 	/* Generate deterministic salt */
-	raw_salt = scram_MockSalt(username);
+	raw_salt = scram_mock_salt(username);
 
-	encoded_salt = (char *) palloc(pg_b64_enc_len(SCRAM_SALT_LEN) + 1);
-	encoded_len = pg_b64_encode(raw_salt, SCRAM_SALT_LEN, encoded_salt);
+	encoded_salt = (char *) palloc(pg_b64_enc_len(SCRAM_DEFAULT_SALT_LEN) + 1);
+	encoded_len = pg_b64_encode(raw_salt, SCRAM_DEFAULT_SALT_LEN, encoded_salt);
 	encoded_salt[encoded_len] = '\0';
 
 	*salt = encoded_salt;
-	*iterations = SCRAM_ITERATIONS_DEFAULT;
+	*iterations = SCRAM_DEFAULT_ITERATIONS;
 
 	/* StoredKey and ServerKey are not used in a doomed authentication */
 	memset(stored_key, 0, SCRAM_KEY_LEN);
@@ -480,14 +584,16 @@ read_attr_value(char **input, char attr)
 	if (*begin != attr)
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-		(errmsg("malformed SCRAM message (attribute '%c' expected, %s found)",
-				attr, sanitize_char(*begin)))));
+				 errmsg("malformed SCRAM message"),
+				 errdetail("Expected attribute '%c' but found %s.",
+						   attr, sanitize_char(*begin))));
 	begin++;
 
 	if (*begin != '=')
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-		 (errmsg("malformed SCRAM message (expected = in attr %c)", attr))));
+				 errmsg("malformed SCRAM message"),
+				 errdetail("Expected character = for attribute %c.", attr)));
 	begin++;
 
 	end = begin;
@@ -541,7 +647,7 @@ sanitize_char(char c)
 	if (c >= 0x21 && c <= 0x7E)
 		snprintf(buf, sizeof(buf), "'%c'", c);
 	else
-		snprintf(buf, sizeof(buf), "0x%02x", c);
+		snprintf(buf, sizeof(buf), "0x%02x", (unsigned char) c);
 	return buf;
 }
 
@@ -567,8 +673,9 @@ read_any_attr(char **input, char *attr_p)
 		  (attr >= 'a' && attr <= 'z')))
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 (errmsg("malformed SCRAM message (attribute expected, invalid char %s found)",
-						 sanitize_char(attr)))));
+				 errmsg("malformed SCRAM message"),
+				 errdetail("Attribute expected, but found invalid character %s.",
+						   sanitize_char(attr))));
 	if (attr_p)
 		*attr_p = attr;
 	begin++;
@@ -576,7 +683,8 @@ read_any_attr(char **input, char *attr_p)
 	if (*begin != '=')
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-		 (errmsg("malformed SCRAM message (expected = in attr %c)", attr))));
+				 errmsg("malformed SCRAM message"),
+				 errdetail("Expected character = for attribute %c.", attr)));
 	begin++;
 
 	end = begin;
@@ -693,14 +801,16 @@ read_client_first_message(scram_state *state, char *input)
 		default:
 			ereport(ERROR,
 					(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					 (errmsg("malformed SCRAM message (unexpected channel-binding flag %s)",
-							 sanitize_char(*input)))));
+					 errmsg("malformed SCRAM message"),
+					 errdetail("Unexpected channel-binding flag %s.",
+							   sanitize_char(*input))));
 	}
 	if (*input != ',')
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed SCRAM message (comma expected, got %s)",
-						sanitize_char(*input))));
+				 errmsg("malformed SCRAM message"),
+				 errdetail("Comma expected, but found character %s.",
+						   sanitize_char(*input))));
 	input++;
 
 	/*
@@ -713,8 +823,9 @@ read_client_first_message(scram_state *state, char *input)
 	if (*input != ',')
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("malformed SCRAM message (unexpected attribute %s in client-first-message)",
-						sanitize_char(*input))));
+				 errmsg("malformed SCRAM message"),
+				 errdetail("Unexpected attribute %s in client-first-message.",
+						   sanitize_char(*input))));
 	input++;
 
 	state->client_first_message_bare = pstrdup(input);
@@ -729,7 +840,7 @@ read_client_first_message(scram_state *state, char *input)
 	if (*input == 'm')
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("client requires mandatory SCRAM extension")));
+				 errmsg("client requires an unsupported SCRAM extension")));
 
 	/*
 	 * Read username.  Note: this is ignored.  We use the username from the
@@ -858,7 +969,7 @@ build_server_first_message(scram_state *state)
 	int			encoded_len;
 
 	if (!pg_backend_random(raw_nonce, SCRAM_RAW_NONCE_LEN))
-		ereport(COMMERROR,
+		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("could not generate random nonce")));
 
@@ -871,7 +982,7 @@ build_server_first_message(scram_state *state)
 				 state->client_nonce, state->server_nonce,
 				 state->salt, state->iterations);
 
-	return state->server_first_message;
+	return pstrdup(state->server_first_message);
 }
 
 
@@ -942,14 +1053,16 @@ read_client_final_message(scram_state *state, char *input)
 	if (pg_b64_decode(value, strlen(value), client_proof) != SCRAM_KEY_LEN)
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 (errmsg("malformed SCRAM message (malformed proof in client-final-message"))));
+				 errmsg("malformed SCRAM message"),
+				 errdetail("Malformed proof in client-final-message.")));
 	memcpy(state->ClientProof, client_proof, SCRAM_KEY_LEN);
 	pfree(client_proof);
 
 	if (*p != '\0')
 		ereport(ERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 (errmsg("malformed SCRAM message (garbage at end of client-final-message)"))));
+				 errmsg("malformed SCRAM message"),
+				 errdetail("Garbage found at the end of client-final-message.")));
 
 	state->client_final_message_without_proof = palloc(proof - begin + 1);
 	memcpy(state->client_final_message_without_proof, input, proof - begin);
@@ -1005,10 +1118,10 @@ build_server_final_message(scram_state *state)
 /*
  * Determinisitcally generate salt for mock authentication, using a SHA256
  * hash based on the username and a cluster-level secret key.  Returns a
- * pointer to a static buffer of size SCRAM_SALT_LEN.
+ * pointer to a static buffer of size SCRAM_DEFAULT_SALT_LEN.
  */
 static char *
-scram_MockSalt(const char *username)
+scram_mock_salt(const char *username)
 {
 	pg_sha256_ctx ctx;
 	static uint8 sha_digest[PG_SHA256_DIGEST_LENGTH];
@@ -1018,9 +1131,9 @@ scram_MockSalt(const char *username)
 	 * Generate salt using a SHA256 hash of the username and the cluster's
 	 * mock authentication nonce.  (This works as long as the salt length is
 	 * not larger the SHA256 digest length. If the salt is smaller, the caller
-	 * will just ignore the extra data))
+	 * will just ignore the extra data.)
 	 */
-	StaticAssertStmt(PG_SHA256_DIGEST_LENGTH >= SCRAM_SALT_LEN,
+	StaticAssertStmt(PG_SHA256_DIGEST_LENGTH >= SCRAM_DEFAULT_SALT_LEN,
 					 "salt length greater than SHA256 digest length");
 
 	pg_sha256_init(&ctx);

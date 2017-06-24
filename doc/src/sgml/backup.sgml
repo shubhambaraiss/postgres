@@ -382,10 +382,10 @@ tar -cf backup.tar /usr/local/pgsql/data
       directories. This will <emphasis>not</> work because the
       information contained in these files is not usable without
       the commit log files,
-      <filename>pg_clog/*</filename>, which contain the commit status of
+      <filename>pg_xact/*</filename>, which contain the commit status of
       all transactions. A table file is only usable with this
       information. Of course it is also impossible to restore only a
-      table and the associated <filename>pg_clog</filename> data
+      table and the associated <filename>pg_xact</filename> data
       because that would render all other tables in the database
       cluster useless.  So file system backups only work for complete
       backup and restoration of an entire database cluster.
@@ -878,7 +878,7 @@ SELECT pg_start_backup('label', false, false);
      <application>pg_dump</application> or
      <application>pg_dumpall</application>).  It is neither
      necessary nor desirable to stop normal operation of the database
-     while you do this. See section
+     while you do this. See
      <xref linkend="backup-lowlevel-base-backup-data"> for things to
      consider during this backup.
     </para>
@@ -887,7 +887,7 @@ SELECT pg_start_backup('label', false, false);
     <para>
      In the same connection as before, issue the command:
 <programlisting>
-SELECT * FROM pg_stop_backup(false);
+SELECT * FROM pg_stop_backup(false, true);
 </programlisting>
      This terminates the backup mode and performs an automatic switch to
      the next WAL segment.  The reason for the switch is to arrange for
@@ -923,6 +923,17 @@ SELECT * FROM pg_stop_backup(false);
      <varname>statement_timeout</varname> value, but make note that if
      <function>pg_stop_backup</> terminates because of this your backup
      may not be valid.
+    </para>
+    <para>
+     If the backup process monitors and ensures that all WAL segment files
+     required for the backup are successfully archived then the second
+     parameter (which defaults to true) can be set to false to have
+     <function>pg_stop_backup</> return as soon as the stop backup record is
+     written to the WAL.  By default, <function>pg_stop_backup</> will wait
+     until all WAL has been archived, which can take some time.  This option
+     must be used with caution: if WAL archiving is not monitored correctly
+     then the backup might not include all of the WAL files and will
+     therefore be incomplete and not able to be restored.
     </para>
    </listitem>
   </orderedlist>
@@ -988,7 +999,7 @@ SELECT pg_start_backup('label', true);
      <application>pg_dump</application> or
      <application>pg_dumpall</application>).  It is neither
      necessary nor desirable to stop normal operation of the database
-     while you do this. See section
+     while you do this. See
      <xref linkend="backup-lowlevel-base-backup-data"> for things to
      consider during this backup.
     </para>
@@ -1413,7 +1424,7 @@ restore_command = 'cp /mnt/server/archivedir/%f %p'
       As with base backups, the easiest way to produce a standalone
       hot backup is to use the <xref linkend="app-pgbasebackup">
       tool. If you include the <literal>-X</> parameter when calling
-      it, all the transaction log required to use the backup will be
+      it, all the write-ahead log required to use the backup will be
       included in the backup automatically, and no special action is
       required to restore the backup.
      </para>

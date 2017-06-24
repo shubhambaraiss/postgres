@@ -58,7 +58,7 @@ static Node *build_subplan(PlannerInfo *root, Plan *plan, PlannerInfo *subroot,
 			  List *plan_params,
 			  SubLinkType subLinkType, int subLinkId,
 			  Node *testexpr, bool adjust_testexpr,
-			  bool unknownEqFalse, bool parallel_safe);
+			  bool unknownEqFalse);
 static List *generate_subquery_params(PlannerInfo *root, List *tlist,
 						 List **paramIds);
 static List *generate_subquery_vars(PlannerInfo *root, List *tlist,
@@ -125,7 +125,7 @@ assign_param_for_var(PlannerInfo *root, Var *var)
 	}
 
 	/* Nope, so make a new one */
-	var = (Var *) copyObject(var);
+	var = copyObject(var);
 	var->varlevelsup = 0;
 
 	pitem = makeNode(PlannerParamItem);
@@ -224,7 +224,7 @@ assign_param_for_placeholdervar(PlannerInfo *root, PlaceHolderVar *phv)
 	}
 
 	/* Nope, so make a new one */
-	phv = (PlaceHolderVar *) copyObject(phv);
+	phv = copyObject(phv);
 	if (phv->phlevelsup != 0)
 	{
 		IncrementVarSublevelsUp((Node *) phv, -((int) phv->phlevelsup), 0);
@@ -316,7 +316,7 @@ replace_outer_agg(PlannerInfo *root, Aggref *agg)
 	 * It does not seem worthwhile to try to match duplicate outer aggs. Just
 	 * make a new slot every time.
 	 */
-	agg = (Aggref *) copyObject(agg);
+	agg = copyObject(agg);
 	IncrementVarSublevelsUp((Node *) agg, -((int) agg->agglevelsup), 0);
 	Assert(agg->agglevelsup == 0);
 
@@ -358,7 +358,7 @@ replace_outer_grouping(PlannerInfo *root, GroupingFunc *grp)
 	 * It does not seem worthwhile to try to match duplicate outer aggs. Just
 	 * make a new slot every time.
 	 */
-	grp = (GroupingFunc *) copyObject(grp);
+	grp = copyObject(grp);
 	IncrementVarSublevelsUp((Node *) grp, -((int) grp->agglevelsup), 0);
 	Assert(grp->agglevelsup == 0);
 
@@ -433,7 +433,7 @@ get_first_col_type(Plan *plan, Oid *coltype, int32 *coltypmod,
 	/* In cases such as EXISTS, tlist might be empty; arbitrarily use VOID */
 	if (plan->targetlist)
 	{
-		TargetEntry *tent = castNode(TargetEntry, linitial(plan->targetlist));
+		TargetEntry *tent = linitial_node(TargetEntry, plan->targetlist);
 
 		if (!tent->resjunk)
 		{
@@ -491,7 +491,7 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 	 * same sub-Query node, but the planner wants to scribble on the Query.
 	 * Try to clean this up when we do querytree redesign...
 	 */
-	subquery = (Query *) copyObject(orig_subquery);
+	subquery = copyObject(orig_subquery);
 
 	/*
 	 * If it's an EXISTS subplan, we might be able to simplify it.
@@ -550,8 +550,7 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 	/* And convert to SubPlan or InitPlan format. */
 	result = build_subplan(root, plan, subroot, plan_params,
 						   subLinkType, subLinkId,
-						   testexpr, true, isTopQual,
-						   best_path->parallel_safe);
+						   testexpr, true, isTopQual);
 
 	/*
 	 * If it's a correlated EXISTS with an unimportant targetlist, we might be
@@ -568,7 +567,7 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 		List	   *paramIds;
 
 		/* Make a second copy of the original subquery */
-		subquery = (Query *) copyObject(orig_subquery);
+		subquery = copyObject(orig_subquery);
 		/* and re-simplify */
 		simple_exists = simplify_EXISTS_query(root, subquery);
 		Assert(simple_exists);
@@ -605,8 +604,7 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 												  plan_params,
 												  ANY_SUBLINK, 0,
 												  newtestexpr,
-												  false, true,
-												  best_path->parallel_safe));
+												  false, true));
 				/* Check we got what we expected */
 				Assert(hashplan->parParam == NIL);
 				Assert(hashplan->useHashTable);
@@ -635,7 +633,7 @@ build_subplan(PlannerInfo *root, Plan *plan, PlannerInfo *subroot,
 			  List *plan_params,
 			  SubLinkType subLinkType, int subLinkId,
 			  Node *testexpr, bool adjust_testexpr,
-			  bool unknownEqFalse, bool parallel_safe)
+			  bool unknownEqFalse)
 {
 	Node	   *result;
 	SubPlan    *splan;
@@ -654,7 +652,7 @@ build_subplan(PlannerInfo *root, Plan *plan, PlannerInfo *subroot,
 					   &splan->firstColCollation);
 	splan->useHashTable = false;
 	splan->unknownEqFalse = unknownEqFalse;
-	splan->parallel_safe = parallel_safe;
+	splan->parallel_safe = plan->parallel_safe;
 	splan->setParam = NIL;
 	splan->parParam = NIL;
 	splan->args = NIL;
@@ -1218,7 +1216,8 @@ SS_process_ctes(PlannerInfo *root)
 
 		/*
 		 * CTE scans are not considered for parallelism (cf
-		 * set_rel_consider_parallel).
+		 * set_rel_consider_parallel), and even if they were, initPlans aren't
+		 * parallel-safe.
 		 */
 		splan->parallel_safe = false;
 		splan->setParam = NIL;
@@ -1431,7 +1430,7 @@ convert_EXISTS_sublink_to_join(PlannerInfo *root, SubLink *sublink,
 	 * Copy the subquery so we can modify it safely (see comments in
 	 * make_subplan).
 	 */
-	subselect = (Query *) copyObject(subselect);
+	subselect = copyObject(subselect);
 
 	/*
 	 * See if the subquery can be simplified based on the knowledge that it's
@@ -1916,7 +1915,7 @@ replace_correlation_vars_mutator(Node *node, PlannerInfo *root)
 	{
 		if (((PlaceHolderVar *) node)->phlevelsup > 0)
 			return (Node *) replace_outer_placeholdervar(root,
-													(PlaceHolderVar *) node);
+														 (PlaceHolderVar *) node);
 	}
 	if (IsA(node, Aggref))
 	{
@@ -2473,6 +2472,10 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 			context.paramids =
 				bms_add_member(context.paramids,
 							   ((WorkTableScan *) plan)->wtParam);
+			context.paramids = bms_add_members(context.paramids, scan_params);
+			break;
+
+		case T_NamedTuplestoreScan:
 			context.paramids = bms_add_members(context.paramids, scan_params);
 			break;
 

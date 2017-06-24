@@ -25,7 +25,7 @@ my $filename = shift;
 # Suck in the whole file.
 local $/ = undef;
 my $cfile;
-open($cfile, $filename) || die "opening $filename for reading: $!";
+open($cfile, '<', $filename) || die "opening $filename for reading: $!";
 my $ccode = <$cfile>;
 close($cfile);
 
@@ -36,7 +36,8 @@ exit 0 if $ccode !~ m/^#define YY_FLEX_SUBMINOR_VERSION (\d+)$/m;
 exit 0 if $1 >= 36;
 
 # Apply the desired patch.
-$ccode =~ s|(struct yyguts_t \* yyg = \(struct yyguts_t\*\)yyscanner; /\* This var may be unused depending upon options. \*/
+$ccode =~
+s|(struct yyguts_t \* yyg = \(struct yyguts_t\*\)yyscanner; /\* This var may be unused depending upon options. \*/
 .*?)
 	return yy_is_jam \? 0 : yy_current_state;
 |$1
@@ -45,7 +46,7 @@ $ccode =~ s|(struct yyguts_t \* yyg = \(struct yyguts_t\*\)yyscanner; /\* This v
 |s;
 
 # Write the modified file back out.
-open($cfile, ">$filename") || die "opening $filename for writing: $!";
+open($cfile, '>', $filename) || die "opening $filename for writing: $!";
 print $cfile $ccode;
 close($cfile);
 

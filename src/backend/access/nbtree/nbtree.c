@@ -59,7 +59,7 @@ typedef struct
 	IndexBulkDeleteCallback callback;
 	void	   *callback_state;
 	BTCycleId	cycleid;
-	BlockNumber lastBlockVacuumed;		/* highest blkno actually vacuumed */
+	BlockNumber lastBlockVacuumed;	/* highest blkno actually vacuumed */
 	BlockNumber lastBlockLocked;	/* highest blkno we've cleanup-locked */
 	BlockNumber totFreePages;	/* true total # of free pages */
 	MemoryContext pagedelcontext;
@@ -92,15 +92,14 @@ typedef enum
 typedef struct BTParallelScanDescData
 {
 	BlockNumber btps_scanPage;	/* latest or next page to be scanned */
-	BTPS_State	btps_pageStatus;/* indicates whether next page is available
-								 * for scan. see above for possible states of
-								 * parallel scan. */
-	int			btps_arrayKeyCount;		/* count indicating number of array
-										 * scan keys processed by parallel
-										 * scan */
+	BTPS_State	btps_pageStatus;	/* indicates whether next page is
+									 * available for scan. see above for
+									 * possible states of parallel scan. */
+	int			btps_arrayKeyCount; /* count indicating number of array scan
+									 * keys processed by parallel scan */
 	slock_t		btps_mutex;		/* protects above variables */
 	ConditionVariable btps_cv;	/* used to synchronize parallel scan */
-} BTParallelScanDescData;
+}			BTParallelScanDescData;
 
 typedef struct BTParallelScanDescData *BTParallelScanDesc;
 
@@ -187,7 +186,7 @@ btbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 #ifdef BTREE_BUILD_STATS
 	if (log_btree_build_stats)
 		ResetUsage();
-#endif   /* BTREE_BUILD_STATS */
+#endif							/* BTREE_BUILD_STATS */
 
 	/*
 	 * We expect to be called exactly once for any index relation. If that's
@@ -234,7 +233,7 @@ btbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 		ShowUsage("BTREE BUILD STATS");
 		ResetUsage();
 	}
-#endif   /* BTREE_BUILD_STATS */
+#endif							/* BTREE_BUILD_STATS */
 
 	/*
 	 * Return statistics
@@ -289,11 +288,11 @@ btbuildempty(Relation index)
 	_bt_initmetapage(metapage, P_NONE, 0);
 
 	/*
-	 * Write the page and log it.  It might seem that an immediate sync
-	 * would be sufficient to guarantee that the file exists on disk, but
-	 * recovery itself might remove it while replaying, for example, an
-	 * XLOG_DBASE_CREATE or XLOG_TBLSPC_CREATE record.  Therefore, we
-	 * need this even when wal_level=minimal.
+	 * Write the page and log it.  It might seem that an immediate sync would
+	 * be sufficient to guarantee that the file exists on disk, but recovery
+	 * itself might remove it while replaying, for example, an
+	 * XLOG_DBASE_CREATE or XLOG_TBLSPC_CREATE record.  Therefore, we need
+	 * this even when wal_level=minimal.
 	 */
 	PageSetChecksumInplace(metapage, BTREE_METAPAGE);
 	smgrwrite(index->rd_smgr, INIT_FORKNUM, BTREE_METAPAGE,

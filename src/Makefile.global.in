@@ -179,6 +179,7 @@ pgxsdir = $(pkglibdir)/pgxs
 #
 # Records the choice of the various --enable-xxx and --with-xxx options.
 
+with_icu	= @with_icu@
 with_perl	= @with_perl@
 with_python	= @with_python@
 with_tcl	= @with_tcl@
@@ -208,6 +209,9 @@ python_version		= @python_version@
 
 krb_srvtab = @krb_srvtab@
 
+ICU_CFLAGS		= @ICU_CFLAGS@
+ICU_LIBS		= @ICU_LIBS@
+
 TCLSH			= @TCLSH@
 TCL_LIBS		= @TCL_LIBS@
 TCL_LIB_SPEC		= @TCL_LIB_SPEC@
@@ -227,6 +231,8 @@ PTHREAD_LIBS		= @PTHREAD_LIBS@
 
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
+
+override CPPFLAGS := $(CPPFLAGS) $(ICU_CFLAGS)
 
 ifdef PGXS
 override CPPFLAGS := -I$(includedir_server) -I$(includedir_internal) $(CPPFLAGS)
@@ -335,7 +341,8 @@ PROVE = @PROVE@
 # There are common routines in src/test/perl, and some test suites have
 # extra perl modules in their own directory.
 PG_PROVE_FLAGS = -I $(top_srcdir)/src/test/perl/ -I $(srcdir)
-PROVE_FLAGS = --verbose
+# User-supplied prove flags such as --verbose can be provided in PROVE_FLAGS.
+PROVE_FLAGS =
 
 # prepend to path if already set, else just set it
 define add_to_path
@@ -394,11 +401,8 @@ STRIP_SHARED_LIB = @STRIP_SHARED_LIB@
 
 # Documentation
 
-have_docbook	= @have_docbook@
-COLLATEINDEX	= @COLLATEINDEX@
 DBTOEPUB	= @DBTOEPUB@
-DOCBOOKSTYLE	= @DOCBOOKSTYLE@
-JADE			= @JADE@
+FOP				= @FOP@
 NSGMLS			= @NSGMLS@
 OSX				= @OSX@
 XMLLINT			= @XMLLINT@
@@ -552,23 +556,27 @@ pg_regress_check = \
     $(top_builddir)/src/test/regress/pg_regress \
     --temp-instance=./tmp_check \
     --inputdir=$(srcdir) \
+    --bindir= \
     $(TEMP_CONF) \
-    --bindir= $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
+    $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
 pg_regress_installcheck = \
     $(top_builddir)/src/test/regress/pg_regress \
     --inputdir=$(srcdir) \
-    --bindir='$(bindir)' $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
+    --bindir='$(bindir)' \
+    $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
 
 pg_isolation_regress_check = \
     $(with_temp_install) \
     $(top_builddir)/src/test/isolation/pg_isolation_regress \
     --temp-instance=./tmp_check_iso \
     --inputdir=$(srcdir) --outputdir=output_iso \
+    --bindir= \
     $(TEMP_CONF) \
-    --bindir= $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
+    $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
 pg_isolation_regress_installcheck = \
     $(top_builddir)/src/test/isolation/pg_isolation_regress \
-    --inputdir=$(srcdir) \
+    --inputdir=$(srcdir) --outputdir=output_iso \
+    --bindir='$(bindir)' \
     $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
 
 ##########################################################################

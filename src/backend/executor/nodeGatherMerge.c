@@ -35,7 +35,7 @@ typedef struct GMReaderTupleBuffer
 	int			readCounter;
 	int			nTuples;
 	bool		done;
-}	GMReaderTupleBuffer;
+} GMReaderTupleBuffer;
 
 /*
  * When we read tuples from workers, it's a good idea to read several at once
@@ -86,12 +86,8 @@ ExecInitGatherMerge(GatherMerge *node, EState *estate, int eflags)
 	/*
 	 * initialize child expressions
 	 */
-	gm_state->ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->plan.targetlist,
-					 (PlanState *) gm_state);
-	gm_state->ps.qual = (List *)
-		ExecInitExpr((Expr *) node->plan.qual,
-					 (PlanState *) gm_state);
+	gm_state->ps.qual =
+		ExecInitQual(node->plan.qual, &gm_state->ps);
 
 	/*
 	 * tuple table initialization
@@ -234,17 +230,17 @@ ExecGatherMerge(GatherMergeState *node)
 	ResetExprContext(econtext);
 
 	/*
-	 * Get next tuple, either from one of our workers, or by running the
-	 * plan ourselves.
+	 * Get next tuple, either from one of our workers, or by running the plan
+	 * ourselves.
 	 */
 	slot = gather_merge_getnext(node);
 	if (TupIsNull(slot))
 		return NULL;
 
 	/*
-	 * form the result tuple using ExecProject(), and return it --- unless
-	 * the projection produces an empty set, in which case we must loop
-	 * back around for another tuple
+	 * form the result tuple using ExecProject(), and return it --- unless the
+	 * projection produces an empty set, in which case we must loop back
+	 * around for another tuple
 	 */
 	econtext->ecxt_outertuple = slot;
 	return ExecProject(node->ps.ps_ProjInfo);
@@ -259,7 +255,7 @@ ExecGatherMerge(GatherMergeState *node)
 void
 ExecEndGatherMerge(GatherMergeState *node)
 {
-	ExecEndNode(outerPlanState(node));      /* let children clean up first */
+	ExecEndNode(outerPlanState(node));	/* let children clean up first */
 	ExecShutdownGatherMerge(node);
 	ExecFreeExprContext(&node->ps);
 	ExecClearTuple(node->ps.ps_ResultTupleSlot);
@@ -423,10 +419,9 @@ reread:
 }
 
 /*
- * Clear out the tuple table slots for each gather merge input,
- * and return a cleared slot.
+ * Clear out the tuple table slots for each gather merge input.
  */
-static TupleTableSlot *
+static void
 gather_merge_clear_slots(GatherMergeState *gm_state)
 {
 	int			i;
@@ -441,9 +436,6 @@ gather_merge_clear_slots(GatherMergeState *gm_state)
 	pfree(gm_state->gm_tuple_buffers);
 	/* Free the binaryheap, which was created for sort */
 	binaryheap_free(gm_state->gm_heap);
-
-	/* return any clear slot */
-	return gm_state->gm_slots[0];
 }
 
 /*
@@ -483,7 +475,8 @@ gather_merge_getnext(GatherMergeState *gm_state)
 	if (binaryheap_empty(gm_state->gm_heap))
 	{
 		/* All the queues are exhausted, and so is the heap */
-		return gather_merge_clear_slots(gm_state);
+		gather_merge_clear_slots(gm_state);
+		return NULL;
 	}
 	else
 	{
@@ -522,7 +515,7 @@ form_tuple_array(GatherMergeState *gm_state, int reader)
 		tuple_buffer->tuple[i] = heap_copytuple(gm_readnext_tuple(gm_state,
 																  reader,
 																  false,
-													   &tuple_buffer->done));
+																  &tuple_buffer->done));
 		if (!HeapTupleIsValid(tuple_buffer->tuple[i]))
 			break;
 		tuple_buffer->nTuples++;
@@ -541,8 +534,8 @@ gather_merge_readnext(GatherMergeState *gm_state, int reader, bool nowait)
 	HeapTuple	tup = NULL;
 
 	/*
-	 * If we're being asked to generate a tuple from the leader, then we
-	 * just call ExecProcNode as normal to produce one.
+	 * If we're being asked to generate a tuple from the leader, then we just
+	 * call ExecProcNode as normal to produce one.
 	 */
 	if (gm_state->nreaders == reader)
 	{
@@ -589,8 +582,8 @@ gather_merge_readnext(GatherMergeState *gm_state, int reader, bool nowait)
 											   &tuple_buffer->done));
 
 		/*
-		 * Attempt to read more tuples in nowait mode and store them in
-		 * the tuple array.
+		 * Attempt to read more tuples in nowait mode and store them in the
+		 * tuple array.
 		 */
 		if (HeapTupleIsValid(tup))
 			form_tuple_array(gm_state, reader);
@@ -604,7 +597,7 @@ gather_merge_readnext(GatherMergeState *gm_state, int reader, bool nowait)
 	ExecStoreTuple(tup,			/* tuple to store */
 				   gm_state->gm_slots[reader],	/* slot in which to store the
 												 * tuple */
-				   InvalidBuffer,		/* buffer associated with this tuple */
+				   InvalidBuffer,	/* buffer associated with this tuple */
 				   true);		/* pfree this pointer if not from heap */
 
 	return true;

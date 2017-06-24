@@ -57,7 +57,7 @@
 #include "pg_getopt.h"
 
 
-static ControlFileData ControlFile;		/* pg_control values */
+static ControlFileData ControlFile; /* pg_control values */
 static XLogSegNo newXlogSegNo;	/* new XLOG segment # */
 static bool guessed = false;	/* T if we had to guess at any values */
 static const char *progname;
@@ -71,6 +71,7 @@ static MultiXactOffset set_mxoff = (MultiXactOffset) -1;
 static uint32 minXlogTli = 0;
 static XLogSegNo minXlogSegNo = 0;
 
+static void CheckDataVersion(void);
 static bool ReadControlFile(void);
 static void GuessControlValues(void);
 static void PrintControlValues(bool guessed);
@@ -319,6 +320,9 @@ main(int argc, char *argv[])
 		exit(1);
 	}
 
+	/* Check that data directory matches our server version */
+	CheckDataVersion();
+
 	/*
 	 * Check for a postmaster lock file --- if there is one, refuse to
 	 * proceed, on grounds we might be interfering with a live installation.
@@ -434,7 +438,7 @@ main(int argc, char *argv[])
 	if (ControlFile.state != DB_SHUTDOWNED && !force)
 	{
 		printf(_("The database server was not shut down cleanly.\n"
-			   "Resetting the transaction log might cause data to be lost.\n"
+				 "Resetting the write-ahead log might cause data to be lost.\n"
 				 "If you want to proceed anyway, use -f to force reset.\n"));
 		exit(1);
 	}
@@ -447,8 +451,72 @@ main(int argc, char *argv[])
 	KillExistingArchiveStatus();
 	WriteEmptyXLOG();
 
-	printf(_("Transaction log reset\n"));
+	printf(_("Write-ahead log reset\n"));
 	return 0;
+}
+
+
+/*
+ * Look at the version string stored in PG_VERSION and decide if this utility
+ * can be run safely or not.
+ *
+ * We don't want to inject pg_control and WAL files that are for a different
+ * major version; that can't do anything good.  Note that we don't treat
+ * mismatching version info in pg_control as a reason to bail out, because
+ * recovering from a corrupted pg_control is one of the main reasons for this
+ * program to exist at all.  However, PG_VERSION is unlikely to get corrupted,
+ * and if it were it would be easy to fix by hand.  So let's make this check
+ * to prevent simple user errors.
+ */
+static void
+CheckDataVersion(void)
+{
+	const char *ver_file = "PG_VERSION";
+	FILE	   *ver_fd;
+	char		rawline[64];
+	int			len;
+
+	if ((ver_fd = fopen(ver_file, "r")) == NULL)
+	{
+		fprintf(stderr, _("%s: could not open file \"%s\" for reading: %s\n"),
+				progname, ver_file, strerror(errno));
+		exit(1);
+	}
+
+	/* version number has to be the first line read */
+	if (!fgets(rawline, sizeof(rawline), ver_fd))
+	{
+		if (!ferror(ver_fd))
+		{
+			fprintf(stderr, _("%s: unexpected empty file \"%s\"\n"),
+					progname, ver_file);
+		}
+		else
+		{
+			fprintf(stderr, _("%s: could not read file \"%s\": %s\n"),
+					progname, ver_file, strerror(errno));
+		}
+		exit(1);
+	}
+
+	/* remove trailing newline, handling Windows newlines as well */
+	len = strlen(rawline);
+	if (len > 0 && rawline[len - 1] == '\n')
+	{
+		rawline[--len] = '\0';
+		if (len > 0 && rawline[len - 1] == '\r')
+			rawline[--len] = '\0';
+	}
+
+	if (strcmp(rawline, PG_MAJORVERSION) != 0)
+	{
+		fprintf(stderr, _("%s: data directory is of wrong version\n"
+						  "File \"%s\" contains \"%s\", which is not compatible with this program's version \"%s\".\n"),
+				progname, ver_file, rawline, PG_MAJORVERSION);
+		exit(1);
+	}
+
+	fclose(ver_fd);
 }
 
 
@@ -496,7 +564,7 @@ ReadControlFile(void)
 	close(fd);
 
 	if (len >= sizeof(ControlFileData) &&
-	  ((ControlFileData *) buffer)->pg_control_version == PG_CONTROL_VERSION)
+		((ControlFileData *) buffer)->pg_control_version == PG_CONTROL_VERSION)
 	{
 		/* Check the CRC. */
 		INIT_CRC32C(crc);
@@ -521,7 +589,7 @@ ReadControlFile(void)
 	}
 
 	/* Looks like it's a mess. */
-	fprintf(stderr, _("%s: pg_control exists but is broken or unknown version; ignoring it\n"),
+	fprintf(stderr, _("%s: pg_control exists but is broken or wrong version; ignoring it\n"),
 			progname);
 	return false;
 }
@@ -766,7 +834,7 @@ static void
 RewriteControlFile(void)
 {
 	int			fd;
-	char		buffer[PG_CONTROL_SIZE];		/* need not be aligned */
+	char		buffer[PG_CONTROL_SIZE];	/* need not be aligned */
 
 	/*
 	 * Adjust fields as needed to force an empty XLOG starting at
@@ -885,8 +953,8 @@ FindEndOfXLOG(void)
 	newXlogSegNo = ControlFile.checkPointCopy.redo / ControlFile.xlog_seg_size;
 
 	/*
-	 * Scan the pg_wal directory to find existing WAL segment files. We
-	 * assume any present have been used; in most scenarios this should be
+	 * Scan the pg_wal directory to find existing WAL segment files. We assume
+	 * any present have been used; in most scenarios this should be
 	 * conservative, because of xlog.c's attempts to pre-create files.
 	 */
 	xldir = opendir(XLOGDIR);
@@ -958,7 +1026,7 @@ KillExistingXLOG(void)
 {
 	DIR		   *xldir;
 	struct dirent *xlde;
-	char		path[MAXPGPATH];
+	char		path[MAXPGPATH + sizeof(XLOGDIR)];
 
 	xldir = opendir(XLOGDIR);
 	if (xldir == NULL)
@@ -973,7 +1041,7 @@ KillExistingXLOG(void)
 		if (IsXLogFileName(xlde->d_name) ||
 			IsPartialXLogFileName(xlde->d_name))
 		{
-			snprintf(path, MAXPGPATH, "%s/%s", XLOGDIR, xlde->d_name);
+			snprintf(path, sizeof(path), "%s/%s", XLOGDIR, xlde->d_name);
 			if (unlink(path) < 0)
 			{
 				fprintf(stderr, _("%s: could not delete file \"%s\": %s\n"),
@@ -1005,11 +1073,11 @@ KillExistingXLOG(void)
 static void
 KillExistingArchiveStatus(void)
 {
+#define ARCHSTATDIR XLOGDIR "/archive_status"
+
 	DIR		   *xldir;
 	struct dirent *xlde;
-	char		path[MAXPGPATH];
-
-#define ARCHSTATDIR XLOGDIR "/archive_status"
+	char		path[MAXPGPATH + sizeof(ARCHSTATDIR)];
 
 	xldir = opendir(ARCHSTATDIR);
 	if (xldir == NULL)
@@ -1027,7 +1095,7 @@ KillExistingArchiveStatus(void)
 			 strcmp(xlde->d_name + XLOG_FNAME_LEN, ".partial.ready") == 0 ||
 			 strcmp(xlde->d_name + XLOG_FNAME_LEN, ".partial.done") == 0))
 		{
-			snprintf(path, MAXPGPATH, "%s/%s", ARCHSTATDIR, xlde->d_name);
+			snprintf(path, sizeof(path), "%s/%s", ARCHSTATDIR, xlde->d_name);
 			if (unlink(path) < 0)
 			{
 				fprintf(stderr, _("%s: could not delete file \"%s\": %s\n"),
@@ -1095,7 +1163,7 @@ WriteEmptyXLOG(void)
 	record->xl_rmid = RM_XLOG_ID;
 
 	recptr += SizeOfXLogRecord;
-	*(recptr++) = XLR_BLOCK_ID_DATA_SHORT;
+	*(recptr++) = (char) XLR_BLOCK_ID_DATA_SHORT;
 	*(recptr++) = sizeof(CheckPoint);
 	memcpy(recptr, &ControlFile.checkPointCopy,
 		   sizeof(CheckPoint));
@@ -1159,7 +1227,7 @@ WriteEmptyXLOG(void)
 static void
 usage(void)
 {
-	printf(_("%s resets the PostgreSQL transaction log.\n\n"), progname);
+	printf(_("%s resets the PostgreSQL write-ahead log.\n\n"), progname);
 	printf(_("Usage:\n  %s [OPTION]... DATADIR\n\n"), progname);
 	printf(_("Options:\n"));
 	printf(_("  -c XID,XID       set oldest and newest transactions bearing commit timestamp\n"));
@@ -1167,7 +1235,7 @@ usage(void)
 	printf(_(" [-D] DATADIR      data directory\n"));
 	printf(_("  -e XIDEPOCH      set next transaction ID epoch\n"));
 	printf(_("  -f               force update to be done\n"));
-	printf(_("  -l XLOGFILE      force minimum WAL starting location for new transaction log\n"));
+	printf(_("  -l WALFILE       force minimum WAL starting location for new write-ahead log\n"));
 	printf(_("  -m MXID,MXID     set next and oldest multitransaction ID\n"));
 	printf(_("  -n               no update, just show what would be done (for testing)\n"));
 	printf(_("  -o OID           set next OID\n"));

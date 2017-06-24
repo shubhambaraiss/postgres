@@ -120,7 +120,7 @@ run_simple_query(const char *sql)
 }
 
 /*
- * Calls pg_current_wal_insert_location() function
+ * Calls pg_current_wal_insert_lsn() function
  */
 XLogRecPtr
 libpqGetCurrentXlogInsertLocation(void)
@@ -130,7 +130,7 @@ libpqGetCurrentXlogInsertLocation(void)
 	uint32		lo;
 	char	   *val;
 
-	val = run_simple_query("SELECT pg_current_wal_insert_location()");
+	val = run_simple_query("SELECT pg_current_wal_insert_lsn()");
 
 	if (sscanf(val, "%X/%X", &hi, &lo) != 2)
 		pg_fatal("unrecognized result \"%s\" for current WAL insert location\n", val);
@@ -489,7 +489,7 @@ libpq_executeFileMap(filemap_t *map)
 	 * temporary table. Now, actually fetch all of those ranges.
 	 */
 	sql =
-		"SELECT path, begin, \n"
+		"SELECT path, begin,\n"
 		"  pg_read_binary_file(path, begin, len, true) AS chunk\n"
 		"FROM fetchchunks\n";
 

@@ -147,6 +147,7 @@ typedef enum ObjectClass
 	OCLASS_REWRITE,				/* pg_rewrite */
 	OCLASS_TRIGGER,				/* pg_trigger */
 	OCLASS_SCHEMA,				/* pg_namespace */
+	OCLASS_STATISTIC_EXT,		/* pg_statistic_ext */
 	OCLASS_TSPARSER,			/* pg_ts_parser */
 	OCLASS_TSDICT,				/* pg_ts_dict */
 	OCLASS_TSTEMPLATE,			/* pg_ts_template */
@@ -170,11 +171,11 @@ typedef enum ObjectClass
 #define LAST_OCLASS		OCLASS_TRANSFORM
 
 /* flag bits for performDeletion/performMultipleDeletions: */
-#define PERFORM_DELETION_INTERNAL			0x0001		/* internal action */
-#define PERFORM_DELETION_CONCURRENTLY		0x0002		/* concurrent drop */
-#define PERFORM_DELETION_QUIETLY			0x0004		/* suppress notices */
-#define PERFORM_DELETION_SKIP_ORIGINAL		0x0008		/* keep original obj */
-#define PERFORM_DELETION_SKIP_EXTENSIONS	0x0010		/* keep extensions */
+#define PERFORM_DELETION_INTERNAL			0x0001	/* internal action */
+#define PERFORM_DELETION_CONCURRENTLY		0x0002	/* concurrent drop */
+#define PERFORM_DELETION_QUIETLY			0x0004	/* suppress notices */
+#define PERFORM_DELETION_SKIP_ORIGINAL		0x0008	/* keep original obj */
+#define PERFORM_DELETION_SKIP_EXTENSIONS	0x0010	/* keep extensions */
 
 
 /* in dependency.c */
@@ -237,11 +238,9 @@ extern long changeDependencyFor(Oid classId, Oid objectId,
 
 extern Oid	getExtensionOfObject(Oid classId, Oid objectId);
 
-extern bool sequenceIsOwned(Oid seqId, Oid *tableId, int32 *colId);
-
-extern void markSequenceUnowned(Oid seqId);
-
-extern List *getOwnedSequences(Oid relid);
+extern bool sequenceIsOwned(Oid seqId, char deptype, Oid *tableId, int32 *colId);
+extern List *getOwnedSequences(Oid relid, AttrNumber attnum);
+extern Oid	getOwnedSequence(Oid relid, AttrNumber attnum);
 
 extern Oid	get_constraint_index(Oid constraintId);
 
@@ -279,4 +278,4 @@ extern void shdepDropOwned(List *relids, DropBehavior behavior);
 
 extern void shdepReassignOwned(List *relids, Oid newrole);
 
-#endif   /* DEPENDENCY_H */
+#endif							/* DEPENDENCY_H */

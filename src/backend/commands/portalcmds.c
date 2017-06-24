@@ -83,7 +83,7 @@ PerformCursorOpen(DeclareCursorStmt *cstmt, ParamListInfo params,
 	if (list_length(rewritten) != 1)
 		elog(ERROR, "non-SELECT statement in DECLARE CURSOR");
 
-	query = castNode(Query, linitial(rewritten));
+	query = linitial_node(Query, rewritten);
 
 	if (query->commandType != CMD_SELECT)
 		elog(ERROR, "non-SELECT statement in DECLARE CURSOR");
@@ -395,7 +395,7 @@ PersistHoldablePortal(Portal portal)
 										true);
 
 		/* Fetch the result set into the tuplestore */
-		ExecutorRun(queryDesc, ForwardScanDirection, 0L);
+		ExecutorRun(queryDesc, ForwardScanDirection, 0L, false);
 
 		(*queryDesc->dest->rDestroy) (queryDesc->dest);
 		queryDesc->dest = NULL;
@@ -403,7 +403,7 @@ PersistHoldablePortal(Portal portal)
 		/*
 		 * Now shut down the inner executor.
 		 */
-		portal->queryDesc = NULL;		/* prevent double shutdown */
+		portal->queryDesc = NULL;	/* prevent double shutdown */
 		ExecutorFinish(queryDesc);
 		ExecutorEnd(queryDesc);
 		FreeQueryDesc(queryDesc);

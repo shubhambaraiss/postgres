@@ -49,12 +49,8 @@ ExecInitCustomScan(CustomScan *cscan, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &css->ss.ps);
 
 	/* initialize child expressions */
-	css->ss.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) cscan->scan.plan.targetlist,
-					 (PlanState *) css);
-	css->ss.ps.qual = (List *)
-		ExecInitExpr((Expr *) cscan->scan.plan.qual,
-					 (PlanState *) css);
+	css->ss.ps.qual =
+		ExecInitQual(cscan->scan.plan.qual, (PlanState *) css);
 
 	/* tuple table initialization */
 	ExecInitScanTupleSlot(estate, &css->ss);
@@ -198,7 +194,7 @@ ExecCustomScanInitializeWorker(CustomScanState *node, shm_toc *toc)
 		int			plan_node_id = node->ss.ps.plan->plan_node_id;
 		void	   *coordinate;
 
-		coordinate = shm_toc_lookup(toc, plan_node_id);
+		coordinate = shm_toc_lookup(toc, plan_node_id, false);
 		methods->InitializeWorkerCustomScan(node, toc, coordinate);
 	}
 }

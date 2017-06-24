@@ -17,7 +17,9 @@ use File::Spec;
 use File::Temp ();
 use IPC::Run;
 use SimpleTee;
-use Test::More;
+
+# specify a recent enough version of Test::More  to support the note() function
+use Test::More 0.82;
 
 our @EXPORT = qw(
   generate_ascii_string
@@ -84,14 +86,14 @@ INIT
 	$test_logfile = basename($0);
 	$test_logfile =~ s/\.[^.]+$//;
 	$test_logfile = "$log_path/regress_log_$test_logfile";
-	open TESTLOG, '>', $test_logfile
+	open my $testlog, '>', $test_logfile
 	  or die "could not open STDOUT to logfile \"$test_logfile\": $!";
 
 	# Hijack STDOUT and STDERR to the log file
-	open(ORIG_STDOUT, ">&STDOUT");
-	open(ORIG_STDERR, ">&STDERR");
-	open(STDOUT,      ">&TESTLOG");
-	open(STDERR,      ">&TESTLOG");
+	open(my $orig_stdout, '>&', \*STDOUT);
+	open(my $orig_stderr, '>&', \*STDERR);
+	open(STDOUT,          '>&', $testlog);
+	open(STDERR,          '>&', $testlog);
 
 	# The test output (ok ...) needs to be printed to the original STDOUT so
 	# that the 'prove' program can parse it, and display it to the user in
@@ -99,16 +101,16 @@ INIT
 	# in the log.
 	my $builder = Test::More->builder;
 	my $fh      = $builder->output;
-	tie *$fh, "SimpleTee", *ORIG_STDOUT, *TESTLOG;
+	tie *$fh, "SimpleTee", $orig_stdout, $testlog;
 	$fh = $builder->failure_output;
-	tie *$fh, "SimpleTee", *ORIG_STDERR, *TESTLOG;
+	tie *$fh, "SimpleTee", $orig_stderr, $testlog;
 
 	# Enable auto-flushing for all the file handles. Stderr and stdout are
 	# redirected to the same file, and buffering causes the lines to appear
 	# in the log in confusing order.
 	autoflush STDOUT 1;
 	autoflush STDERR 1;
-	autoflush TESTLOG 1;
+	autoflush $testlog 1;
 }
 
 END

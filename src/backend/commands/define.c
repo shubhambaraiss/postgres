@@ -206,7 +206,7 @@ defGetInt64(DefElem *def)
 			 * strings.
 			 */
 			return DatumGetInt64(DirectFunctionCall1(int8in,
-										 CStringGetDatum(strVal(def->arg))));
+													 CStringGetDatum(strVal(def->arg))));
 		default:
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
@@ -336,7 +336,7 @@ defGetStringList(DefElem *def)
 	if (nodeTag(def->arg) != T_List)
 		elog(ERROR, "unrecognized node type: %d", (int) nodeTag(def->arg));
 
-	foreach(cell, (List *)def->arg)
+	foreach(cell, (List *) def->arg)
 	{
 		Node	   *str = (Node *) lfirst(cell);
 

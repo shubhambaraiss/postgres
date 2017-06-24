@@ -27,6 +27,7 @@ extern ObjectAddress DefineIndex(Oid relationId,
 			Oid indexRelationId,
 			bool is_alter_table,
 			bool check_rights,
+			bool check_not_in_use,
 			bool skip_build,
 			bool quiet);
 extern Oid	ReindexIndex(RangeVar *indexRelation, int options);
@@ -76,6 +77,13 @@ extern void interpret_function_parameter_list(ParseState *pstate,
 extern ObjectAddress DefineOperator(List *names, List *parameters);
 extern void RemoveOperatorById(Oid operOid);
 extern ObjectAddress AlterOperator(AlterOperatorStmt *stmt);
+
+/* commands/statscmds.c */
+extern ObjectAddress CreateStatistics(CreateStatsStmt *stmt);
+extern void RemoveStatisticsById(Oid statsOid);
+extern void UpdateStatisticsForTypeChange(Oid statsOid,
+							  Oid relationOid, int attnum,
+							  Oid oldColumnType, Oid newColumnType);
 
 /* commands/aggregatecmds.c */
 extern ObjectAddress DefineAggregate(ParseState *pstate, List *name, List *args, bool oldstyle,
@@ -156,4 +164,4 @@ extern TypeName *defGetTypeName(DefElem *def);
 extern int	defGetTypeLength(DefElem *def);
 extern List *defGetStringList(DefElem *def);
 
-#endif   /* DEFREM_H */
+#endif							/* DEFREM_H */

@@ -129,7 +129,7 @@ BitmapHeapNext(BitmapHeapScanState *node)
 				node->prefetch_pages = 0;
 				node->prefetch_target = -1;
 			}
-#endif   /* USE_PREFETCH */
+#endif							/* USE_PREFETCH */
 		}
 		else
 		{
@@ -182,7 +182,7 @@ BitmapHeapNext(BitmapHeapScanState *node)
 				node->shared_prefetch_iterator =
 					tbm_attach_shared_iterate(dsa, pstate->prefetch_iterator);
 			}
-#endif   /* USE_PREFETCH */
+#endif							/* USE_PREFETCH */
 		}
 		node->initialized = true;
 	}
@@ -265,7 +265,7 @@ BitmapHeapNext(BitmapHeapScanState *node)
 					pstate->prefetch_target++;
 				SpinLockRelease(&pstate->mutex);
 			}
-#endif   /* USE_PREFETCH */
+#endif							/* USE_PREFETCH */
 		}
 
 		/*
@@ -319,7 +319,7 @@ BitmapHeapNext(BitmapHeapScanState *node)
 			econtext->ecxt_scantuple = slot;
 			ResetExprContext(econtext);
 
-			if (!ExecQual(node->bitmapqualorig, econtext, false))
+			if (!ExecQual(node->bitmapqualorig, econtext))
 			{
 				/* Fails recheck, so drop it and loop back for another */
 				InstrCountFiltered2(node, 1);
@@ -494,7 +494,7 @@ BitmapAdjustPrefetchIterator(BitmapHeapScanState *node,
 		SpinLockAcquire(&pstate->mutex);
 		if (pstate->prefetch_pages > 0)
 		{
-			node->prefetch_pages--;
+			pstate->prefetch_pages--;
 			SpinLockRelease(&pstate->mutex);
 		}
 		else
@@ -506,14 +506,15 @@ BitmapAdjustPrefetchIterator(BitmapHeapScanState *node,
 			 * In case of shared mode, we can not ensure that the current
 			 * blockno of the main iterator and that of the prefetch iterator
 			 * are same.  It's possible that whatever blockno we are
-			 * prefetching will be processed by another process.  Therefore, we
-			 * don't validate the blockno here as we do in non-parallel case.
+			 * prefetching will be processed by another process.  Therefore,
+			 * we don't validate the blockno here as we do in non-parallel
+			 * case.
 			 */
 			if (prefetch_iterator)
 				tbm_shared_iterate(prefetch_iterator);
 		}
 	}
-#endif   /* USE_PREFETCH */
+#endif							/* USE_PREFETCH */
 }
 
 /*
@@ -557,7 +558,7 @@ BitmapAdjustPrefetchTarget(BitmapHeapScanState *node)
 			pstate->prefetch_target++;
 		SpinLockRelease(&pstate->mutex);
 	}
-#endif   /* USE_PREFETCH */
+#endif							/* USE_PREFETCH */
 }
 
 /*
@@ -633,7 +634,7 @@ BitmapPrefetch(BitmapHeapScanState *node, HeapScanDesc scan)
 			}
 		}
 	}
-#endif   /* USE_PREFETCH */
+#endif							/* USE_PREFETCH */
 }
 
 /*
@@ -654,7 +655,7 @@ BitmapHeapRecheck(BitmapHeapScanState *node, TupleTableSlot *slot)
 
 	ResetExprContext(econtext);
 
-	return ExecQual(node->bitmapqualorig, econtext, false);
+	return ExecQual(node->bitmapqualorig, econtext);
 }
 
 /* ----------------------------------------------------------------
@@ -837,15 +838,10 @@ ExecInitBitmapHeapScan(BitmapHeapScan *node, EState *estate, int eflags)
 	/*
 	 * initialize child expressions
 	 */
-	scanstate->ss.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.targetlist,
-					 (PlanState *) scanstate);
-	scanstate->ss.ps.qual = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.qual,
-					 (PlanState *) scanstate);
-	scanstate->bitmapqualorig = (List *)
-		ExecInitExpr((Expr *) node->bitmapqualorig,
-					 (PlanState *) scanstate);
+	scanstate->ss.ps.qual =
+		ExecInitQual(node->scan.plan.qual, (PlanState *) scanstate);
+	scanstate->bitmapqualorig =
+		ExecInitQual(node->bitmapqualorig, (PlanState *) scanstate);
 
 	/*
 	 * tuple table initialization
@@ -1009,7 +1005,7 @@ ExecBitmapHeapInitializeWorker(BitmapHeapScanState *node, shm_toc *toc)
 	ParallelBitmapHeapState *pstate;
 	Snapshot	snapshot;
 
-	pstate = shm_toc_lookup(toc, node->ss.ps.plan->plan_node_id);
+	pstate = shm_toc_lookup(toc, node->ss.ps.plan->plan_node_id, false);
 	node->pstate = pstate;
 
 	snapshot = RestoreSnapshot(pstate->phs_snapshot_data);

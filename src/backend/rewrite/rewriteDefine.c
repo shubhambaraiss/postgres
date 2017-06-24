@@ -160,7 +160,7 @@ InsertRule(char *rulname,
 	referenced.objectSubId = 0;
 
 	recordDependencyOn(&myself, &referenced,
-			 (evtype == CMD_SELECT) ? DEPENDENCY_INTERNAL : DEPENDENCY_AUTO);
+					   (evtype == CMD_SELECT) ? DEPENDENCY_INTERNAL : DEPENDENCY_AUTO);
 
 	/*
 	 * Also install dependencies on objects referenced in action and qual.
@@ -171,7 +171,7 @@ InsertRule(char *rulname,
 	if (event_qual != NULL)
 	{
 		/* Find query containing OLD/NEW rtable entries */
-		Query	   *qry = castNode(Query, linitial(action));
+		Query	   *qry = linitial_node(Query, action);
 
 		qry = getInsertSelectQuery(qry, NULL);
 		recordDependencyOnExpr(&myself, event_qual, qry->rtable,
@@ -284,7 +284,7 @@ DefineQueryRewrite(char *rulename,
 	 */
 	foreach(l, action)
 	{
-		query = castNode(Query, lfirst(l));
+		query = lfirst_node(Query, l);
 		if (query->resultRelation == 0)
 			continue;
 		/* Don't be fooled by INSERT/SELECT */
@@ -312,7 +312,7 @@ DefineQueryRewrite(char *rulename,
 		if (list_length(action) == 0)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			   errmsg("INSTEAD NOTHING rules on SELECT are not implemented"),
+					 errmsg("INSTEAD NOTHING rules on SELECT are not implemented"),
 					 errhint("Use views instead.")));
 
 		/*
@@ -326,12 +326,12 @@ DefineQueryRewrite(char *rulename,
 		/*
 		 * ... the one action must be a SELECT, ...
 		 */
-		query = castNode(Query, linitial(action));
+		query = linitial_node(Query, action);
 		if (!is_instead ||
 			query->commandType != CMD_SELECT)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("rules on SELECT must have action INSTEAD SELECT")));
+					 errmsg("rules on SELECT must have action INSTEAD SELECT")));
 
 		/*
 		 * ... it cannot contain data-modifying WITH ...
@@ -373,9 +373,9 @@ DefineQueryRewrite(char *rulename,
 				rule = event_relation->rd_rules->rules[i];
 				if (rule->event == CMD_SELECT)
 					ereport(ERROR,
-						  (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-						   errmsg("\"%s\" is already a view",
-								  RelationGetRelationName(event_relation))));
+							(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+							 errmsg("\"%s\" is already a view",
+									RelationGetRelationName(event_relation))));
 			}
 		}
 
@@ -421,6 +421,18 @@ DefineQueryRewrite(char *rulename,
 		{
 			HeapScanDesc scanDesc;
 			Snapshot	snapshot;
+
+			if (event_relation->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+				ereport(ERROR,
+						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+						 errmsg("could not convert partitioned table \"%s\" to a view",
+								RelationGetRelationName(event_relation))));
+
+			if (event_relation->rd_rel->relispartition)
+				ereport(ERROR,
+						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+						 errmsg("could not convert partition \"%s\" to a view",
+								RelationGetRelationName(event_relation))));
 
 			snapshot = RegisterSnapshot(GetLatestSnapshot());
 			scanDesc = heap_beginscan(event_relation, snapshot, 0, NULL);
@@ -480,14 +492,14 @@ DefineQueryRewrite(char *rulename,
 
 		foreach(l, action)
 		{
-			query = castNode(Query, lfirst(l));
+			query = lfirst_node(Query, l);
 
 			if (!query->returningList)
 				continue;
 			if (haveReturning)
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				  errmsg("cannot have multiple RETURNING lists in a rule")));
+						 errmsg("cannot have multiple RETURNING lists in a rule")));
 			haveReturning = true;
 			if (event_qual != NULL)
 				ereport(ERROR,
@@ -661,7 +673,7 @@ checkRuleResultList(List *targetList, TupleDesc resultDesc, bool isSelect,
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 isSelect ?
-				   errmsg("SELECT rule's target list has too many entries") :
+					 errmsg("SELECT rule's target list has too many entries") :
 					 errmsg("RETURNING list has too many entries")));
 
 		attr = resultDesc->attrs[i - 1];
@@ -900,7 +912,9 @@ RangeVarCallbackForRenameRule(const RangeVar *rv, Oid relid, Oid oldrelid,
 	form = (Form_pg_class) GETSTRUCT(tuple);
 
 	/* only tables and views can have rules */
-	if (form->relkind != RELKIND_RELATION && form->relkind != RELKIND_VIEW)
+	if (form->relkind != RELKIND_RELATION &&
+		form->relkind != RELKIND_VIEW &&
+		form->relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is not a table or view", rv->relname)));

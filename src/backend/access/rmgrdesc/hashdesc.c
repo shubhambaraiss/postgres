@@ -51,7 +51,7 @@ hash_desc(StringInfo buf, XLogReaderState *record)
 				xl_hash_add_ovfl_page *xlrec = (xl_hash_add_ovfl_page *) rec;
 
 				appendStringInfo(buf, "bmsize %d, bmpage_found %c",
-						   xlrec->bmsize, (xlrec->bmpage_found) ? 'T' : 'F');
+								 xlrec->bmsize, (xlrec->bmpage_found) ? 'T' : 'F');
 				break;
 			}
 		case XLOG_HASH_SPLIT_ALLOCATE_PAGE:
@@ -60,7 +60,7 @@ hash_desc(StringInfo buf, XLogReaderState *record)
 
 				appendStringInfo(buf, "new_bucket %u, meta_page_masks_updated %c, issplitpoint_changed %c",
 								 xlrec->new_bucket,
-					(xlrec->flags & XLH_SPLIT_META_UPDATE_MASKS) ? 'T' : 'F',
+								 (xlrec->flags & XLH_SPLIT_META_UPDATE_MASKS) ? 'T' : 'F',
 								 (xlrec->flags & XLH_SPLIT_META_UPDATE_SPLITPOINT) ? 'T' : 'F');
 				break;
 			}
@@ -69,7 +69,7 @@ hash_desc(StringInfo buf, XLogReaderState *record)
 				xl_hash_split_complete *xlrec = (xl_hash_split_complete *) rec;
 
 				appendStringInfo(buf, "old_bucket_flag %u, new_bucket_flag %u",
-							 xlrec->old_bucket_flag, xlrec->new_bucket_flag);
+								 xlrec->old_bucket_flag, xlrec->new_bucket_flag);
 				break;
 			}
 		case XLOG_HASH_MOVE_PAGE_CONTENTS:
@@ -96,7 +96,8 @@ hash_desc(StringInfo buf, XLogReaderState *record)
 			{
 				xl_hash_delete *xlrec = (xl_hash_delete *) rec;
 
-				appendStringInfo(buf, "is_primary %c",
+				appendStringInfo(buf, "clear_dead_marking %c, is_primary %c",
+								 xlrec->clear_dead_marking ? 'T' : 'F',
 								 xlrec->is_primary_bucket_page ? 'T' : 'F');
 				break;
 			}
@@ -105,6 +106,14 @@ hash_desc(StringInfo buf, XLogReaderState *record)
 				xl_hash_update_meta_page *xlrec = (xl_hash_update_meta_page *) rec;
 
 				appendStringInfo(buf, "ntuples %g",
+								 xlrec->ntuples);
+				break;
+			}
+		case XLOG_HASH_VACUUM_ONE_PAGE:
+			{
+				xl_hash_vacuum_one_page *xlrec = (xl_hash_vacuum_one_page *) rec;
+
+				appendStringInfo(buf, "ntuples %d",
 								 xlrec->ntuples);
 				break;
 			}
@@ -154,6 +163,8 @@ hash_identify(uint8 info)
 		case XLOG_HASH_UPDATE_META_PAGE:
 			id = "UPDATE_META_PAGE";
 			break;
+		case XLOG_HASH_VACUUM_ONE_PAGE:
+			id = "VACUUM_ONE_PAGE";
 	}
 
 	return id;

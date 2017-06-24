@@ -75,20 +75,23 @@ enum SysCacheIdentifier
 	PARTRELID,
 	PROCNAMEARGSNSP,
 	PROCOID,
+	PUBLICATIONNAME,
+	PUBLICATIONOID,
+	PUBLICATIONREL,
+	PUBLICATIONRELMAP,
 	RANGETYPE,
 	RELNAMENSP,
 	RELOID,
 	REPLORIGIDENT,
 	REPLORIGNAME,
-	PUBLICATIONOID,
-	PUBLICATIONNAME,
-	PUBLICATIONREL,
-	PUBLICATIONRELMAP,
 	RULERELNAME,
 	SEQRELID,
+	STATEXTNAMENSP,
+	STATEXTOID,
 	STATRELATTINH,
-	SUBSCRIPTIONOID,
 	SUBSCRIPTIONNAME,
+	SUBSCRIPTIONOID,
+	SUBSCRIPTIONRELMAP,
 	TABLESPACEOID,
 	TRFOID,
 	TRFTYPELANG,
@@ -105,6 +108,8 @@ enum SysCacheIdentifier
 	TYPEOID,
 	USERMAPPINGOID,
 	USERMAPPINGUSERSERVER
+
+#define SysCacheSize (USERMAPPINGUSERSERVER + 1)
 };
 
 extern void InitCatalogCache(void);
@@ -136,6 +141,8 @@ extern uint32 GetSysCacheHashValue(int cacheId,
 struct catclist;
 extern struct catclist *SearchSysCacheList(int cacheId, int nkeys,
 				   Datum key1, Datum key2, Datum key3, Datum key4);
+
+extern void SysCacheInvalidate(int cacheId, uint32 hashValue);
 
 extern bool RelationInvalidatesSnapshotsOnly(Oid relid);
 extern bool RelationHasSysCache(Oid relid);
@@ -202,4 +209,4 @@ extern bool RelationSupportsSysCache(Oid relid);
 
 #define ReleaseSysCacheList(x)	ReleaseCatCacheList(x)
 
-#endif   /* SYSCACHE_H */
+#endif							/* SYSCACHE_H */

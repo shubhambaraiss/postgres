@@ -24,12 +24,14 @@
 #include "parser/parsetree.h"
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
+#include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#include "utils/typcache.h"
 #include "utils/tqual.h"
 
 
@@ -116,15 +118,15 @@ RelationFindReplTupleByIndex(Relation rel, Oid idxoid,
 							 TupleTableSlot *searchslot,
 							 TupleTableSlot *outslot)
 {
-	HeapTuple		scantuple;
-	ScanKeyData		skey[INDEX_MAX_KEYS];
-	IndexScanDesc	scan;
-	SnapshotData	snap;
-	TransactionId	xwait;
-	Relation		idxrel;
-	bool			found;
+	HeapTuple	scantuple;
+	ScanKeyData skey[INDEX_MAX_KEYS];
+	IndexScanDesc scan;
+	SnapshotData snap;
+	TransactionId xwait;
+	Relation	idxrel;
+	bool		found;
 
-	/* Open the index.*/
+	/* Open the index. */
 	idxrel = index_open(idxoid, RowExclusiveLock);
 
 	/* Start an index scan. */
@@ -152,8 +154,8 @@ retry:
 			snap.xmin : snap.xmax;
 
 		/*
-		 * If the tuple is locked, wait for locking transaction to finish
-		 * and retry.
+		 * If the tuple is locked, wait for locking transaction to finish and
+		 * retry.
 		 */
 		if (TransactionIdIsValid(xwait))
 		{
@@ -165,7 +167,7 @@ retry:
 	/* Found tuple, try to lock it in the lockmode. */
 	if (found)
 	{
-		Buffer buf;
+		Buffer		buf;
 		HeapUpdateFailureData hufd;
 		HTSU_Result res;
 		HeapTupleData locktup;
@@ -177,7 +179,7 @@ retry:
 		res = heap_lock_tuple(rel, &locktup, GetCurrentCommandId(false),
 							  lockmode,
 							  LockWaitBlock,
-							  false /* don't follow updates */,
+							  false /* don't follow updates */ ,
 							  &buf, &hufd);
 		/* the tuple slot already has the buffer pinned */
 		ReleaseBuffer(buf);
@@ -219,18 +221,20 @@ retry:
  * to use.
  */
 static bool
-tuple_equals_slot(TupleDesc	desc, HeapTuple tup, TupleTableSlot *slot)
+tuple_equals_slot(TupleDesc desc, HeapTuple tup, TupleTableSlot *slot)
 {
 	Datum		values[MaxTupleAttributeNumber];
 	bool		isnull[MaxTupleAttributeNumber];
 	int			attrnum;
-	Form_pg_attribute att;
 
 	heap_deform_tuple(tup, desc, values, isnull);
 
 	/* Check equality of the attributes. */
 	for (attrnum = 0; attrnum < desc->natts; attrnum++)
 	{
+		Form_pg_attribute att;
+		TypeCacheEntry *typentry;
+
 		/*
 		 * If one value is NULL and other is not, then they are certainly not
 		 * equal
@@ -245,8 +249,17 @@ tuple_equals_slot(TupleDesc	desc, HeapTuple tup, TupleTableSlot *slot)
 			continue;
 
 		att = desc->attrs[attrnum];
-		if (!datumIsEqual(values[attrnum], slot->tts_values[attrnum],
-						  att->attbyval, att->attlen))
+
+		typentry = lookup_type_cache(att->atttypid, TYPECACHE_EQ_OPR_FINFO);
+		if (!OidIsValid(typentry->eq_opr_finfo.fn_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_FUNCTION),
+					 errmsg("could not identify an equality operator for type %s",
+							format_type_be(att->atttypid))));
+
+		if (!DatumGetBool(FunctionCall2(&typentry->eq_opr_finfo,
+										values[attrnum],
+										slot->tts_values[attrnum])))
 			return false;
 	}
 
@@ -267,12 +280,12 @@ bool
 RelationFindReplTupleSeq(Relation rel, LockTupleMode lockmode,
 						 TupleTableSlot *searchslot, TupleTableSlot *outslot)
 {
-	HeapTuple		scantuple;
-	HeapScanDesc	scan;
-	SnapshotData	snap;
-	TransactionId	xwait;
-	bool			found;
-	TupleDesc		desc = RelationGetDescr(rel);
+	HeapTuple	scantuple;
+	HeapScanDesc scan;
+	SnapshotData snap;
+	TransactionId xwait;
+	bool		found;
+	TupleDesc	desc = RelationGetDescr(rel);
 
 	Assert(equalTupleDescs(desc, outslot->tts_tupleDescriptor));
 
@@ -299,8 +312,8 @@ retry:
 			snap.xmin : snap.xmax;
 
 		/*
-		 * If the tuple is locked, wait for locking transaction to finish
-		 * and retry.
+		 * If the tuple is locked, wait for locking transaction to finish and
+		 * retry.
 		 */
 		if (TransactionIdIsValid(xwait))
 		{
@@ -312,7 +325,7 @@ retry:
 	/* Found tuple, try to lock it in the lockmode. */
 	if (found)
 	{
-		Buffer buf;
+		Buffer		buf;
 		HeapUpdateFailureData hufd;
 		HTSU_Result res;
 		HeapTupleData locktup;
@@ -324,7 +337,7 @@ retry:
 		res = heap_lock_tuple(rel, &locktup, GetCurrentCommandId(false),
 							  lockmode,
 							  LockWaitBlock,
-							  false /* don't follow updates */,
+							  false /* don't follow updates */ ,
 							  &buf, &hufd);
 		/* the tuple slot already has the buffer pinned */
 		ReleaseBuffer(buf);
@@ -363,10 +376,10 @@ retry:
 void
 ExecSimpleRelationInsert(EState *estate, TupleTableSlot *slot)
 {
-	bool			skip_tuple = false;
-	HeapTuple		tuple;
-	ResultRelInfo  *resultRelInfo = estate->es_result_relation_info;
-	Relation		rel = resultRelInfo->ri_RelationDesc;
+	bool		skip_tuple = false;
+	HeapTuple	tuple;
+	ResultRelInfo *resultRelInfo = estate->es_result_relation_info;
+	Relation	rel = resultRelInfo->ri_RelationDesc;
 
 	/* For now we support only tables. */
 	Assert(rel->rd_rel->relkind == RELKIND_RELATION);
@@ -379,7 +392,7 @@ ExecSimpleRelationInsert(EState *estate, TupleTableSlot *slot)
 	{
 		slot = ExecBRInsertTriggers(estate, resultRelInfo, slot);
 
-		if (slot == NULL)	/* "do nothing" */
+		if (slot == NULL)		/* "do nothing" */
 			skip_tuple = true;
 	}
 
@@ -389,7 +402,7 @@ ExecSimpleRelationInsert(EState *estate, TupleTableSlot *slot)
 
 		/* Check the constraints of the tuple */
 		if (rel->rd_att->constr)
-			ExecConstraints(resultRelInfo, slot, slot, estate);
+			ExecConstraints(resultRelInfo, slot, estate);
 
 		/* Store the slot into tuple that we can inspect. */
 		tuple = ExecMaterializeSlot(slot);
@@ -420,10 +433,10 @@ void
 ExecSimpleRelationUpdate(EState *estate, EPQState *epqstate,
 						 TupleTableSlot *searchslot, TupleTableSlot *slot)
 {
-	bool			skip_tuple = false;
-	HeapTuple		tuple;
-	ResultRelInfo  *resultRelInfo = estate->es_result_relation_info;
-	Relation		rel = resultRelInfo->ri_RelationDesc;
+	bool		skip_tuple = false;
+	HeapTuple	tuple;
+	ResultRelInfo *resultRelInfo = estate->es_result_relation_info;
+	Relation	rel = resultRelInfo->ri_RelationDesc;
 
 	/* For now we support only tables. */
 	Assert(rel->rd_rel->relkind == RELKIND_RELATION);
@@ -438,7 +451,7 @@ ExecSimpleRelationUpdate(EState *estate, EPQState *epqstate,
 									&searchslot->tts_tuple->t_self,
 									NULL, slot);
 
-		if (slot == NULL)	/* "do nothing" */
+		if (slot == NULL)		/* "do nothing" */
 			skip_tuple = true;
 	}
 
@@ -448,7 +461,7 @@ ExecSimpleRelationUpdate(EState *estate, EPQState *epqstate,
 
 		/* Check the constraints of the tuple */
 		if (rel->rd_att->constr)
-			ExecConstraints(resultRelInfo, slot, slot, estate);
+			ExecConstraints(resultRelInfo, slot, estate);
 
 		/* Store the slot into tuple that we can write. */
 		tuple = ExecMaterializeSlot(slot);
@@ -482,9 +495,9 @@ void
 ExecSimpleRelationDelete(EState *estate, EPQState *epqstate,
 						 TupleTableSlot *searchslot)
 {
-	bool			skip_tuple = false;
-	ResultRelInfo  *resultRelInfo = estate->es_result_relation_info;
-	Relation		rel = resultRelInfo->ri_RelationDesc;
+	bool		skip_tuple = false;
+	ResultRelInfo *resultRelInfo = estate->es_result_relation_info;
+	Relation	rel = resultRelInfo->ri_RelationDesc;
 
 	/* For now we support only tables. */
 	Assert(rel->rd_rel->relkind == RELKIND_RELATION);
@@ -550,4 +563,24 @@ CheckCmdReplicaIdentity(Relation rel, CmdType cmd)
 				 errmsg("cannot delete from table \"%s\" because it does not have replica identity and publishes deletes",
 						RelationGetRelationName(rel)),
 				 errhint("To enable deleting from the table, set REPLICA IDENTITY using ALTER TABLE.")));
+}
+
+
+/*
+ * Check if we support writing into specific relkind.
+ *
+ * The nspname and relname are only needed for error reporting.
+ */
+void
+CheckSubscriptionRelkind(char relkind, const char *nspname,
+						 const char *relname)
+{
+	/*
+	 * We currently only support writing to regular tables.
+	 */
+	if (relkind != RELKIND_RELATION)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("logical replication target relation \"%s.%s\" is not a table",
+						nspname, relname)));
 }

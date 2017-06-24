@@ -49,7 +49,7 @@ bitno_to_blkno(HashMetaPage metap, uint32 ovflbitnum)
 	 * Convert to absolute page number by adding the number of bucket pages
 	 * that exist before this split point.
 	 */
-	return (BlockNumber) ((1 << i) + ovflbitnum);
+	return (BlockNumber) (_hash_get_totalbuckets(i) + ovflbitnum);
 }
 
 /*
@@ -67,14 +67,15 @@ _hash_ovflblkno_to_bitno(HashMetaPage metap, BlockNumber ovflblkno)
 	/* Determine the split number containing this page */
 	for (i = 1; i <= splitnum; i++)
 	{
-		if (ovflblkno <= (BlockNumber) (1 << i))
+		if (ovflblkno <= (BlockNumber) _hash_get_totalbuckets(i))
 			break;				/* oops */
-		bitnum = ovflblkno - (1 << i);
+		bitnum = ovflblkno - _hash_get_totalbuckets(i);
 
 		/*
 		 * bitnum has to be greater than number of overflow page added in
 		 * previous split point. The overflow page at this splitnum (i) if any
-		 * should start from ((2 ^ i) + metap->hashm_spares[i - 1] + 1).
+		 * should start from (_hash_get_totalbuckets(i) +
+		 * metap->hashm_spares[i - 1] + 1).
 		 */
 		if (bitnum > metap->hashm_spares[i - 1] &&
 			bitnum <= metap->hashm_spares[i])
@@ -167,7 +168,7 @@ _hash_addovflpage(Relation rel, Buffer metabuf, Buffer buf, bool retain_pin)
 		if (retain_pin)
 		{
 			/* pin will be retained only for the primary bucket page */
-			Assert(pageopaque->hasho_flag & LH_BUCKET_PAGE);
+			Assert((pageopaque->hasho_flag & LH_PAGE_TYPE) == LH_BUCKET_PAGE);
 			LockBuffer(buf, BUFFER_LOCK_UNLOCK);
 		}
 		else
@@ -504,7 +505,7 @@ _hash_freeovflpage(Relation rel, Buffer bucketbuf, Buffer ovflbuf,
 	uint32		ovflbitno;
 	int32		bitmappage,
 				bitmapbit;
-	Bucket bucket PG_USED_FOR_ASSERTS_ONLY;
+	Bucket		bucket PG_USED_FOR_ASSERTS_ONLY;
 	Buffer		prevbuf = InvalidBuffer;
 	Buffer		nextbuf = InvalidBuffer;
 	bool		update_metap = false;
@@ -533,7 +534,7 @@ _hash_freeovflpage(Relation rel, Buffer bucketbuf, Buffer ovflbuf,
 			prevbuf = _hash_getbuf_with_strategy(rel,
 												 prevblkno,
 												 HASH_WRITE,
-										   LH_BUCKET_PAGE | LH_OVERFLOW_PAGE,
+												 LH_BUCKET_PAGE | LH_OVERFLOW_PAGE,
 												 bstrategy);
 	}
 	if (BlockNumberIsValid(nextblkno))
@@ -589,11 +590,22 @@ _hash_freeovflpage(Relation rel, Buffer bucketbuf, Buffer ovflbuf,
 	}
 
 	/*
-	 * Initialize the freed overflow page.  Just zeroing the page won't work,
-	 * because WAL replay routines expect pages to be initialized. See
-	 * explanation of RBM_NORMAL mode atop XLogReadBufferExtended.
+	 * Reinitialize the freed overflow page.  Just zeroing the page won't
+	 * work, because WAL replay routines expect pages to be initialized. See
+	 * explanation of RBM_NORMAL mode atop XLogReadBufferExtended.  We are
+	 * careful to make the special space valid here so that tools like
+	 * pageinspect won't get confused.
 	 */
 	_hash_pageinit(ovflpage, BufferGetPageSize(ovflbuf));
+
+	ovflopaque = (HashPageOpaque) PageGetSpecialPointer(ovflpage);
+
+	ovflopaque->hasho_prevblkno = InvalidBlockNumber;
+	ovflopaque->hasho_nextblkno = InvalidBlockNumber;
+	ovflopaque->hasho_bucket = -1;
+	ovflopaque->hasho_flag = LH_UNUSED_PAGE;
+	ovflopaque->hasho_page_id = HASHO_PAGE_ID;
+
 	MarkBufferDirty(ovflbuf);
 
 	if (BufferIsValid(prevbuf))
@@ -960,7 +972,7 @@ readpage:
 
 						XLogRegisterBuffer(2, rbuf, REGBUF_STANDARD);
 						XLogRegisterBufData(2, (char *) deletable,
-										  ndeletable * sizeof(OffsetNumber));
+											ndeletable * sizeof(OffsetNumber));
 
 						recptr = XLogInsert(RM_HASH_ID, XLOG_HASH_MOVE_PAGE_CONTENTS);
 

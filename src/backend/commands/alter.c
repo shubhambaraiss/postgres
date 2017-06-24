@@ -33,6 +33,7 @@
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_subscription.h"
+#include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_ts_config.h"
 #include "catalog/pg_ts_dict.h"
 #include "catalog/pg_ts_parser.h"
@@ -119,6 +120,10 @@ report_namespace_conflict(Oid classId, const char *name, Oid nspOid)
 		case ConversionRelationId:
 			Assert(OidIsValid(nspOid));
 			msgfmt = gettext_noop("conversion \"%s\" already exists in schema \"%s\"");
+			break;
+		case StatisticExtRelationId:
+			Assert(OidIsValid(nspOid));
+			msgfmt = gettext_noop("statistics object \"%s\" already exists in schema \"%s\"");
 			break;
 		case TSParserRelationId:
 			Assert(OidIsValid(nspOid));
@@ -373,6 +378,7 @@ ExecRenameStmt(RenameStmt *stmt)
 		case OBJECT_OPCLASS:
 		case OBJECT_OPFAMILY:
 		case OBJECT_LANGUAGE:
+		case OBJECT_STATISTIC_EXT:
 		case OBJECT_TSCONFIGURATION:
 		case OBJECT_TSDICTIONARY:
 		case OBJECT_TSPARSER:
@@ -402,7 +408,7 @@ ExecRenameStmt(RenameStmt *stmt)
 		default:
 			elog(ERROR, "unrecognized rename stmt type: %d",
 				 (int) stmt->renameType);
-			return InvalidObjectAddress;		/* keep compiler happy */
+			return InvalidObjectAddress;	/* keep compiler happy */
 	}
 }
 
@@ -422,7 +428,7 @@ ExecAlterObjectDependsStmt(AlterObjectDependsStmt *stmt, ObjectAddress *refAddre
 
 	address =
 		get_object_address_rv(stmt->objectType, stmt->relation, (List *) stmt->object,
-							&rel, AccessExclusiveLock, false);
+							  &rel, AccessExclusiveLock, false);
 
 	/*
 	 * If a relation was involved, it would have been opened and locked. We
@@ -462,7 +468,7 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
 	{
 		case OBJECT_EXTENSION:
 			address = AlterExtensionNamespace(strVal((Value *) stmt->object), stmt->newschema,
-										  oldSchemaAddr ? &oldNspOid : NULL);
+											  oldSchemaAddr ? &oldNspOid : NULL);
 			break;
 
 		case OBJECT_FOREIGN_TABLE:
@@ -489,6 +495,7 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
 		case OBJECT_OPERATOR:
 		case OBJECT_OPCLASS:
 		case OBJECT_OPFAMILY:
+		case OBJECT_STATISTIC_EXT:
 		case OBJECT_TSCONFIGURATION:
 		case OBJECT_TSDICTIONARY:
 		case OBJECT_TSPARSER:
@@ -518,7 +525,7 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
 		default:
 			elog(ERROR, "unrecognized AlterObjectSchemaStmt type: %d",
 				 (int) stmt->objectType);
-			return InvalidObjectAddress;		/* keep compiler happy */
+			return InvalidObjectAddress;	/* keep compiler happy */
 	}
 
 	if (oldSchemaAddr)
@@ -536,7 +543,8 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
  * so it only needs to cover object types that can be members of an
  * extension, and it doesn't have to deal with certain special cases
  * such as not wanting to process array types --- those should never
- * be direct members of an extension anyway.
+ * be direct members of an extension anyway.  Nonetheless, we insist
+ * on listing all OCLASS types in the switch.
  *
  * Returns the OID of the object's previous namespace, or InvalidOid if
  * object doesn't have a schema.
@@ -571,12 +579,13 @@ AlterObjectNamespace_oid(Oid classId, Oid objid, Oid nspOid,
 			oldNspOid = AlterTypeNamespace_oid(objid, nspOid, objsMoved);
 			break;
 
+		case OCLASS_PROC:
 		case OCLASS_COLLATION:
 		case OCLASS_CONVERSION:
 		case OCLASS_OPERATOR:
 		case OCLASS_OPCLASS:
 		case OCLASS_OPFAMILY:
-		case OCLASS_PROC:
+		case OCLASS_STATISTIC_EXT:
 		case OCLASS_TSPARSER:
 		case OCLASS_TSDICT:
 		case OCLASS_TSTEMPLATE:
@@ -593,8 +602,38 @@ AlterObjectNamespace_oid(Oid classId, Oid objid, Oid nspOid,
 			}
 			break;
 
-		default:
+		case OCLASS_CAST:
+		case OCLASS_CONSTRAINT:
+		case OCLASS_DEFAULT:
+		case OCLASS_LANGUAGE:
+		case OCLASS_LARGEOBJECT:
+		case OCLASS_AM:
+		case OCLASS_AMOP:
+		case OCLASS_AMPROC:
+		case OCLASS_REWRITE:
+		case OCLASS_TRIGGER:
+		case OCLASS_SCHEMA:
+		case OCLASS_ROLE:
+		case OCLASS_DATABASE:
+		case OCLASS_TBLSPACE:
+		case OCLASS_FDW:
+		case OCLASS_FOREIGN_SERVER:
+		case OCLASS_USER_MAPPING:
+		case OCLASS_DEFACL:
+		case OCLASS_EXTENSION:
+		case OCLASS_EVENT_TRIGGER:
+		case OCLASS_POLICY:
+		case OCLASS_PUBLICATION:
+		case OCLASS_PUBLICATION_REL:
+		case OCLASS_SUBSCRIPTION:
+		case OCLASS_TRANSFORM:
+			/* ignore object types that don't have schema-qualified names */
 			break;
+
+			/*
+			 * There's intentionally no default: case here; we want the
+			 * compiler to warn if a new OCLASS hasn't been handled above.
+			 */
 	}
 
 	return oldNspOid;
@@ -803,6 +842,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 		case OBJECT_OPERATOR:
 		case OBJECT_OPCLASS:
 		case OBJECT_OPFAMILY:
+		case OBJECT_STATISTIC_EXT:
 		case OBJECT_TABLESPACE:
 		case OBJECT_TSDICTIONARY:
 		case OBJECT_TSCONFIGURATION:
@@ -840,7 +880,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 		default:
 			elog(ERROR, "unrecognized AlterOwnerStmt type: %d",
 				 (int) stmt->objectType);
-			return InvalidObjectAddress;		/* keep compiler happy */
+			return InvalidObjectAddress;	/* keep compiler happy */
 	}
 }
 

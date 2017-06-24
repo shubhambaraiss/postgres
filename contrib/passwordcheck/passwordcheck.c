@@ -39,8 +39,8 @@ extern void _PG_init(void);
  *
  * username: name of role being created or changed
  * password: new password (possibly already encrypted)
- * password_type: PASSWORD_TYPE_PLAINTEXT or PASSWORD_TYPE_MD5 (there
- *			could be other encryption schemes in future)
+ * password_type: PASSWORD_TYPE_* code, to indicate if the password is
+ *			in plaintext or encrypted form.
  * validuntil_time: password expiration time, as a timestamptz Datum
  * validuntil_null: true if password expiration time is NULL
  *
@@ -112,7 +112,7 @@ check_password(const char *username,
 		if (!pwd_has_letter || !pwd_has_nonletter)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			   errmsg("password must contain both letters and nonletters")));
+					 errmsg("password must contain both letters and nonletters")));
 
 #ifdef USE_CRACKLIB
 		/* call cracklib to check password */

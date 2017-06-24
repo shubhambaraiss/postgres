@@ -30,7 +30,7 @@ typedef enum UserAuth
 	uaIdent,
 	uaPassword,
 	uaMD5,
-	uaSASL,
+	uaSCRAM,
 	uaGSS,
 	uaSSPI,
 	uaPAM,
@@ -89,10 +89,14 @@ typedef struct HbaLine
 	bool		include_realm;
 	bool		compat_realm;
 	bool		upn_username;
-	char	   *radiusserver;
-	char	   *radiussecret;
-	char	   *radiusidentifier;
-	int			radiusport;
+	List	   *radiusservers;
+	char	   *radiusservers_s;
+	List	   *radiussecrets;
+	char	   *radiussecrets_s;
+	List	   *radiusidentifiers;
+	char	   *radiusidentifiers_s;
+	List	   *radiusports;
+	char	   *radiusports_s;
 } HbaLine;
 
 typedef struct IdentLine
@@ -116,4 +120,4 @@ extern int check_usermap(const char *usermap_name,
 			  bool case_sensitive);
 extern bool pg_isblank(const char c);
 
-#endif   /* HBA_H */
+#endif							/* HBA_H */

@@ -38,6 +38,7 @@ Portal		ActivePortal = NULL;
 static void ProcessQuery(PlannedStmt *plan,
 			 const char *sourceText,
 			 ParamListInfo params,
+			 QueryEnvironment *queryEnv,
 			 DestReceiver *dest,
 			 char *completionTag);
 static void FillPortalStore(Portal portal, bool isTopLevel);
@@ -69,26 +70,30 @@ CreateQueryDesc(PlannedStmt *plannedstmt,
 				Snapshot crosscheck_snapshot,
 				DestReceiver *dest,
 				ParamListInfo params,
+				QueryEnvironment *queryEnv,
 				int instrument_options)
 {
 	QueryDesc  *qd = (QueryDesc *) palloc(sizeof(QueryDesc));
 
 	qd->operation = plannedstmt->commandType;	/* operation */
-	qd->plannedstmt = plannedstmt;		/* plan */
+	qd->plannedstmt = plannedstmt;	/* plan */
 	qd->sourceText = sourceText;	/* query text */
 	qd->snapshot = RegisterSnapshot(snapshot);	/* snapshot */
 	/* RI check snapshot */
 	qd->crosscheck_snapshot = RegisterSnapshot(crosscheck_snapshot);
 	qd->dest = dest;			/* output dest */
 	qd->params = params;		/* parameter values passed into query */
-	qd->instrument_options = instrument_options;		/* instrumentation
-														 * wanted? */
+	qd->queryEnv = queryEnv;
+	qd->instrument_options = instrument_options;	/* instrumentation wanted? */
 
 	/* null these fields until set by ExecutorStart */
 	qd->tupDesc = NULL;
 	qd->estate = NULL;
 	qd->planstate = NULL;
 	qd->totaltime = NULL;
+
+	/* not yet executed */
+	qd->already_executed = false;
 
 	return qd;
 }
@@ -132,6 +137,7 @@ static void
 ProcessQuery(PlannedStmt *plan,
 			 const char *sourceText,
 			 ParamListInfo params,
+			 QueryEnvironment *queryEnv,
 			 DestReceiver *dest,
 			 char *completionTag)
 {
@@ -142,7 +148,7 @@ ProcessQuery(PlannedStmt *plan,
 	 */
 	queryDesc = CreateQueryDesc(plan, sourceText,
 								GetActiveSnapshot(), InvalidSnapshot,
-								dest, params, 0);
+								dest, params, queryEnv, 0);
 
 	/*
 	 * Call ExecutorStart to prepare the plan for execution
@@ -152,7 +158,7 @@ ProcessQuery(PlannedStmt *plan,
 	/*
 	 * Run the plan to completion.
 	 */
-	ExecutorRun(queryDesc, ForwardScanDirection, 0L);
+	ExecutorRun(queryDesc, ForwardScanDirection, 0L, true);
 
 	/*
 	 * Build command completion status string, if caller wants one.
@@ -489,12 +495,13 @@ PortalStart(Portal portal, ParamListInfo params,
 				 * Create QueryDesc in portal's context; for the moment, set
 				 * the destination to DestNone.
 				 */
-				queryDesc = CreateQueryDesc(castNode(PlannedStmt, linitial(portal->stmts)),
+				queryDesc = CreateQueryDesc(linitial_node(PlannedStmt, portal->stmts),
 											portal->sourceText,
 											GetActiveSnapshot(),
 											InvalidSnapshot,
 											None_Receiver,
 											params,
+											portal->queryEnv,
 											0);
 
 				/*
@@ -679,7 +686,7 @@ PortalSetResultFormat(Portal portal, int nFormats, int16 *formats)
  * suspended due to exhaustion of the count parameter.
  */
 bool
-PortalRun(Portal portal, long count, bool isTopLevel,
+PortalRun(Portal portal, long count, bool isTopLevel, bool run_once,
 		  DestReceiver *dest, DestReceiver *altdest,
 		  char *completionTag)
 {
@@ -711,6 +718,10 @@ PortalRun(Portal portal, long count, bool isTopLevel,
 	 * Check for improper portal use, and mark portal active.
 	 */
 	MarkPortalActive(portal);
+
+	/* Set run_once flag.  Shouldn't be clear if previously set. */
+	Assert(!portal->run_once || run_once);
+	portal->run_once = run_once;
 
 	/*
 	 * Set up global portal context pointers.
@@ -918,7 +929,8 @@ PortalRunSelect(Portal portal,
 		else
 		{
 			PushActiveSnapshot(queryDesc->snapshot);
-			ExecutorRun(queryDesc, direction, (uint64) count);
+			ExecutorRun(queryDesc, direction, (uint64) count,
+						portal->run_once);
 			nprocessed = queryDesc->estate->es_processed;
 			PopActiveSnapshot();
 		}
@@ -926,7 +938,7 @@ PortalRunSelect(Portal portal,
 		if (!ScanDirectionIsNoMovement(direction))
 		{
 			if (nprocessed > 0)
-				portal->atStart = false;		/* OK to go backward now */
+				portal->atStart = false;	/* OK to go backward now */
 			if (count == 0 || nprocessed < (uint64) count)
 				portal->atEnd = true;	/* we retrieved 'em all */
 			portal->portalPos += nprocessed;
@@ -957,7 +969,8 @@ PortalRunSelect(Portal portal,
 		else
 		{
 			PushActiveSnapshot(queryDesc->snapshot);
-			ExecutorRun(queryDesc, direction, (uint64) count);
+			ExecutorRun(queryDesc, direction, (uint64) count,
+						portal->run_once);
 			nprocessed = queryDesc->estate->es_processed;
 			PopActiveSnapshot();
 		}
@@ -1022,7 +1035,7 @@ FillPortalStore(Portal portal, bool isTopLevel)
 			break;
 
 		case PORTAL_UTIL_SELECT:
-			PortalRunUtility(portal, castNode(PlannedStmt, linitial(portal->stmts)),
+			PortalRunUtility(portal, linitial_node(PlannedStmt, portal->stmts),
 							 isTopLevel, true, treceiver, completionTag);
 			break;
 
@@ -1164,8 +1177,9 @@ PortalRunUtility(Portal portal, PlannedStmt *pstmt,
 
 	ProcessUtility(pstmt,
 				   portal->sourceText,
-			   isTopLevel ? PROCESS_UTILITY_TOPLEVEL : PROCESS_UTILITY_QUERY,
+				   isTopLevel ? PROCESS_UTILITY_TOPLEVEL : PROCESS_UTILITY_QUERY,
 				   portal->portalParams,
+				   portal->queryEnv,
 				   dest,
 				   completionTag);
 
@@ -1217,7 +1231,7 @@ PortalRunMulti(Portal portal,
 	 */
 	foreach(stmtlist_item, portal->stmts)
 	{
-		PlannedStmt *pstmt = castNode(PlannedStmt, lfirst(stmtlist_item));
+		PlannedStmt *pstmt = lfirst_node(PlannedStmt, stmtlist_item);
 
 		/*
 		 * If we got a cancel signal in prior command, quit
@@ -1272,6 +1286,7 @@ PortalRunMulti(Portal portal,
 				ProcessQuery(pstmt,
 							 portal->sourceText,
 							 portal->portalParams,
+							 portal->queryEnv,
 							 dest, completionTag);
 			}
 			else
@@ -1280,6 +1295,7 @@ PortalRunMulti(Portal portal,
 				ProcessQuery(pstmt,
 							 portal->sourceText,
 							 portal->portalParams,
+							 portal->queryEnv,
 							 altdest, NULL);
 			}
 
@@ -1393,6 +1409,9 @@ PortalRunFetch(Portal portal,
 	 * Check for improper portal use, and mark portal active.
 	 */
 	MarkPortalActive(portal);
+
+	/* If supporting FETCH, portal can't be run-once. */
+	Assert(!portal->run_once);
 
 	/*
 	 * Set up global portal context pointers.

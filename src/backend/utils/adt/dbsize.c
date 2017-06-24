@@ -17,6 +17,7 @@
 #include "access/htup_details.h"
 #include "catalog/catalog.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_authid.h"
 #include "catalog/pg_tablespace.h"
 #include "commands/dbcommands.h"
 #include "commands/tablespace.h"
@@ -40,7 +41,7 @@ db_dir_size(const char *path)
 	int64		dirsize = 0;
 	struct dirent *direntry;
 	DIR		   *dirdesc;
-	char		filename[MAXPGPATH];
+	char		filename[MAXPGPATH * 2];
 
 	dirdesc = AllocateDir(path);
 
@@ -57,7 +58,7 @@ db_dir_size(const char *path)
 			strcmp(direntry->d_name, "..") == 0)
 			continue;
 
-		snprintf(filename, MAXPGPATH, "%s/%s", path, direntry->d_name);
+		snprintf(filename, sizeof(filename), "%s/%s", path, direntry->d_name);
 
 		if (stat(filename, &fst) < 0)
 		{
@@ -85,19 +86,25 @@ calculate_database_size(Oid dbOid)
 	DIR		   *dirdesc;
 	struct dirent *direntry;
 	char		dirpath[MAXPGPATH];
-	char		pathname[MAXPGPATH];
+	char		pathname[MAXPGPATH + 12 + sizeof(TABLESPACE_VERSION_DIRECTORY)];
 	AclResult	aclresult;
 
-	/* User must have connect privilege for target database */
+	/*
+	 * User must have connect privilege for target database or be a member of
+	 * pg_read_all_stats
+	 */
 	aclresult = pg_database_aclcheck(dbOid, GetUserId(), ACL_CONNECT);
-	if (aclresult != ACLCHECK_OK)
+	if (aclresult != ACLCHECK_OK &&
+		!is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_STATS))
+	{
 		aclcheck_error(aclresult, ACL_KIND_DATABASE,
 					   get_database_name(dbOid));
+	}
 
 	/* Shared storage in pg_global is not counted */
 
 	/* Include pg_default storage */
-	snprintf(pathname, MAXPGPATH, "base/%u", dbOid);
+	snprintf(pathname, sizeof(pathname), "base/%u", dbOid);
 	totalsize = db_dir_size(pathname);
 
 	/* Scan the non-default tablespaces */
@@ -117,7 +124,7 @@ calculate_database_size(Oid dbOid)
 			strcmp(direntry->d_name, "..") == 0)
 			continue;
 
-		snprintf(pathname, MAXPGPATH, "pg_tblspc/%s/%s/%u",
+		snprintf(pathname, sizeof(pathname), "pg_tblspc/%s/%s/%u",
 				 direntry->d_name, TABLESPACE_VERSION_DIRECTORY, dbOid);
 		totalsize += db_dir_size(pathname);
 	}
@@ -165,18 +172,19 @@ static int64
 calculate_tablespace_size(Oid tblspcOid)
 {
 	char		tblspcPath[MAXPGPATH];
-	char		pathname[MAXPGPATH];
+	char		pathname[MAXPGPATH * 2];
 	int64		totalsize = 0;
 	DIR		   *dirdesc;
 	struct dirent *direntry;
 	AclResult	aclresult;
 
 	/*
-	 * User must have CREATE privilege for target tablespace, either
-	 * explicitly granted or implicitly because it is default for current
-	 * database.
+	 * User must be a member of pg_read_all_stats or have CREATE privilege for
+	 * target tablespace, either explicitly granted or implicitly because it
+	 * is default for current database.
 	 */
-	if (tblspcOid != MyDatabaseTableSpace)
+	if (tblspcOid != MyDatabaseTableSpace &&
+		!is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_STATS))
 	{
 		aclresult = pg_tablespace_aclcheck(tblspcOid, GetUserId(), ACL_CREATE);
 		if (aclresult != ACLCHECK_OK)
@@ -207,7 +215,7 @@ calculate_tablespace_size(Oid tblspcOid)
 			strcmp(direntry->d_name, "..") == 0)
 			continue;
 
-		snprintf(pathname, MAXPGPATH, "%s/%s", tblspcPath, direntry->d_name);
+		snprintf(pathname, sizeof(pathname), "%s/%s", tblspcPath, direntry->d_name);
 
 		if (stat(pathname, &fst) < 0)
 		{
@@ -325,7 +333,7 @@ pg_relation_size(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 
 	size = calculate_relation_size(&(rel->rd_node), rel->rd_backend,
-							  forkname_to_number(text_to_cstring(forkName)));
+								   forkname_to_number(text_to_cstring(forkName)));
 
 	relation_close(rel, AccessShareLock);
 
@@ -830,10 +838,10 @@ pg_size_bytes(PG_FUNCTION_ARGS)
 			Numeric		mul_num;
 
 			mul_num = DatumGetNumeric(DirectFunctionCall1(int8_numeric,
-												 Int64GetDatum(multiplier)));
+														  Int64GetDatum(multiplier)));
 
 			num = DatumGetNumeric(DirectFunctionCall2(numeric_mul,
-													NumericGetDatum(mul_num),
+													  NumericGetDatum(mul_num),
 													  NumericGetDatum(num)));
 		}
 	}
@@ -881,7 +889,7 @@ pg_relation_filenode(PG_FUNCTION_ARGS)
 			/* okay, these have storage */
 			if (relform->relfilenode)
 				result = relform->relfilenode;
-			else	/* Consult the relation mapper */
+			else				/* Consult the relation mapper */
 				result = RelationMapOidToFilenode(relid,
 												  relform->relisshared);
 			break;
@@ -968,9 +976,9 @@ pg_relation_filepath(PG_FUNCTION_ARGS)
 				rnode.dbNode = MyDatabaseId;
 			if (relform->relfilenode)
 				rnode.relNode = relform->relfilenode;
-			else	/* Consult the relation mapper */
+			else				/* Consult the relation mapper */
 				rnode.relNode = RelationMapOidToFilenode(relid,
-													   relform->relisshared);
+														 relform->relisshared);
 			break;
 
 		default:

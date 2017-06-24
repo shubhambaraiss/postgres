@@ -41,14 +41,16 @@ test: reltime
 test: tinterval
 test: inet
 test: macaddr
+test: macaddr8
 test: tstypes
-test: comments
 test: geometry
 test: horology
 test: regex
 test: oidjoins
 test: type_sanity
 test: opr_sanity
+test: misc_sanity
+test: comments
 test: expressions
 test: insert
 test: insert_conflict
@@ -128,6 +130,8 @@ test: dbsize
 test: misc_functions
 test: sysviews
 test: tsrf
+test: tidscan
+test: stats_ext
 test: rules
 test: psql_crosstab
 test: select_parallel
@@ -167,6 +171,7 @@ test: conversion
 test: truncate
 test: alter_table
 test: sequence
+test: identity
 test: polymorphism
 test: rowtypes
 test: returning

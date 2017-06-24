@@ -16,7 +16,8 @@
   As these functions return detailed page-level information, only the superuser
   has EXECUTE privileges on them upon installation.  After the functions have
   been installed, users may issue <command>GRANT</command> commands to change
-  the privileges on the functions to allow non-superusers to execute them.  See
+  the privileges on the functions to allow non-superusers to execute them. Members
+  of the <literal>pg_stat_scan_tables</literal> role are granted access by default. See
   the description of the <xref linkend="sql-grant"> command for specifics.
  </para>
 
@@ -118,13 +119,13 @@ free_percent       | 1.95
     </table>
 
     <note>
-      <para>
-        The <literal>table_len</literal> will always be greater than the sum
-        of the <literal>tuple_len</literal>, <literal>dead_tuple_len</literal>
-        and <literal>free_space</literal>. The difference is accounted for by
-        fixed page overhead, the per-page table of pointers to tuples, and
-        padding to ensure that tuples are correctly aligned. 
-      </para>
+     <para>
+      The <literal>table_len</literal> will always be greater than the sum
+      of the <literal>tuple_len</literal>, <literal>dead_tuple_len</literal>
+      and <literal>free_space</literal>. The difference is accounted for by
+      fixed page overhead, the per-page table of pointers to tuples, and
+      padding to ensure that tuples are correctly aligned.
+     </para>
     </note>
 
     <para>
@@ -371,7 +372,7 @@ version        | 2
 bucket_pages   | 33081
 overflow_pages | 0
 bitmap_pages   | 1
-zero_pages     | 32455
+unused_pages   | 32455
 live_items     | 10204006
 dead_items     | 0
 free_percent   | 61.8005949100872
@@ -417,9 +418,9 @@ free_percent   | 61.8005949100872
        </row>
 
        <row>
-        <entry><structfield>zero_pages</structfield></entry>
+        <entry><structfield>unused_pages</structfield></entry>
         <entry><type>bigint</type></entry>
-        <entry>Number of new or zero pages</entry>
+        <entry>Number of unused pages</entry>
        </row>
 
        <row>

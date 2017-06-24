@@ -87,7 +87,7 @@ static IncludeWal includewal = STREAM_WAL;
 static bool fastcheckpoint = false;
 static bool writerecoveryconf = false;
 static bool do_sync = true;
-static int	standby_message_timeout = 10 * 1000;		/* 10 sec = default */
+static int	standby_message_timeout = 10 * 1000;	/* 10 sec = default */
 static pg_time_t last_progress_report = 0;
 static int32 maxrate = 0;		/* no limit by default */
 static char *replication_slot = NULL;
@@ -174,19 +174,19 @@ cleanup_directories_atexit(void)
 
 		if (made_new_xlogdir)
 		{
-			fprintf(stderr, _("%s: removing transaction log directory \"%s\"\n"),
+			fprintf(stderr, _("%s: removing WAL directory \"%s\"\n"),
 					progname, xlog_dir);
 			if (!rmtree(xlog_dir, true))
-				fprintf(stderr, _("%s: failed to remove transaction log directory\n"),
+				fprintf(stderr, _("%s: failed to remove WAL directory\n"),
 						progname);
 		}
 		else if (found_existing_xlogdir)
 		{
 			fprintf(stderr,
-					_("%s: removing contents of transaction log directory \"%s\"\n"),
+					_("%s: removing contents of WAL directory \"%s\"\n"),
 					progname, xlog_dir);
 			if (!rmtree(xlog_dir, false))
-				fprintf(stderr, _("%s: failed to remove contents of transaction log directory\n"),
+				fprintf(stderr, _("%s: failed to remove contents of WAL directory\n"),
 						progname);
 		}
 	}
@@ -194,12 +194,12 @@ cleanup_directories_atexit(void)
 	{
 		if (made_new_pgdata || found_existing_pgdata)
 			fprintf(stderr,
-			  _("%s: data directory \"%s\" not removed at user's request\n"),
+					_("%s: data directory \"%s\" not removed at user's request\n"),
 					progname, basedir);
 
 		if (made_new_xlogdir || found_existing_xlogdir)
 			fprintf(stderr,
-					_("%s: transaction log directory \"%s\" not removed at user's request\n"),
+					_("%s: WAL directory \"%s\" not removed at user's request\n"),
 					progname, xlog_dir);
 	}
 
@@ -332,16 +332,16 @@ usage(void)
 	printf(_("  -D, --pgdata=DIRECTORY receive base backup into directory\n"));
 	printf(_("  -F, --format=p|t       output format (plain (default), tar)\n"));
 	printf(_("  -r, --max-rate=RATE    maximum transfer rate to transfer data directory\n"
-	  "                         (in kB/s, or use suffix \"k\" or \"M\")\n"));
+			 "                         (in kB/s, or use suffix \"k\" or \"M\")\n"));
 	printf(_("  -R, --write-recovery-conf\n"
 			 "                         write recovery.conf for replication\n"));
 	printf(_("  -S, --slot=SLOTNAME    replication slot to use\n"));
 	printf(_("      --no-slot          prevent creation of temporary replication slot\n"));
 	printf(_("  -T, --tablespace-mapping=OLDDIR=NEWDIR\n"
-	  "                         relocate tablespace in OLDDIR to NEWDIR\n"));
+			 "                         relocate tablespace in OLDDIR to NEWDIR\n"));
 	printf(_("  -X, --wal-method=none|fetch|stream\n"
 			 "                         include required WAL files with specified method\n"));
-	printf(_("      --waldir=WALDIR    location for the transaction log directory\n"));
+	printf(_("      --waldir=WALDIR    location for the write-ahead log directory\n"));
 	printf(_("  -z, --gzip             compress tar output\n"));
 	printf(_("  -Z, --compress=0-9     compress tar output with given compression level\n"));
 	printf(_("\nGeneral options:\n"));
@@ -414,7 +414,7 @@ reached_end_position(XLogRecPtr segendpos, uint32 timeline,
 			if (sscanf(xlogend, "%X/%X", &hi, &lo) != 2)
 			{
 				fprintf(stderr,
-				  _("%s: could not parse transaction log location \"%s\"\n"),
+						_("%s: could not parse write-ahead log location \"%s\"\n"),
 						progname, xlogend);
 				exit(1);
 			}
@@ -480,6 +480,11 @@ LogStreamerMain(logstreamer_param *param)
 	stream.timeline = param->timeline;
 	stream.sysidentifier = param->sysidentifier;
 	stream.stream_stop = reached_end_position;
+#ifndef WIN32
+	stream.stop_socket = bgpipe[0];
+#else
+	stream.stop_socket = PGINVALID_SOCKET;
+#endif
 	stream.standby_message_timeout = standby_message_timeout;
 	stream.synchronous = false;
 	stream.do_sync = do_sync;
@@ -488,7 +493,7 @@ LogStreamerMain(logstreamer_param *param)
 	stream.replication_slot = replication_slot;
 	stream.temp_slot = param->temp_slot;
 	if (stream.temp_slot && !stream.replication_slot)
-		stream.replication_slot = psprintf("pg_basebackup_%d", (int) getpid());
+		stream.replication_slot = psprintf("pg_basebackup_%d", (int) PQbackendPID(param->bgconn));
 
 	if (format == 'p')
 		stream.walmethod = CreateWalDirectoryMethod(param->xlog, 0, do_sync);
@@ -544,7 +549,7 @@ StartLogStreamer(char *startpos, uint32 timeline, char *sysidentifier)
 	if (sscanf(startpos, "%X/%X", &hi, &lo) != 2)
 	{
 		fprintf(stderr,
-				_("%s: could not parse transaction log location \"%s\"\n"),
+				_("%s: could not parse write-ahead log location \"%s\"\n"),
 				progname, startpos);
 		disconnect_and_exit(1);
 	}
@@ -573,7 +578,7 @@ StartLogStreamer(char *startpos, uint32 timeline, char *sysidentifier)
 	snprintf(param->xlog, sizeof(param->xlog), "%s/%s",
 			 basedir,
 			 PQserverVersion(conn) < MINIMUM_VERSION_FOR_PG_WAL ?
-				"pg_xlog" : "pg_wal");
+			 "pg_xlog" : "pg_wal");
 
 	/* Temporary replication slots are only supported in 10 and newer */
 	if (PQserverVersion(conn) < MINIMUM_VERSION_FOR_TEMP_SLOTS)
@@ -585,9 +590,9 @@ StartLogStreamer(char *startpos, uint32 timeline, char *sysidentifier)
 	{
 		/*
 		 * Create pg_wal/archive_status or pg_xlog/archive_status (and thus
-		 * pg_wal or pg_xlog) depending on the target server so we can write to
-		 * basedir/pg_wal or basedir/pg_xlog as the directory entry in the tar
-		 * file may arrive later.
+		 * pg_wal or pg_xlog) depending on the target server so we can write
+		 * to basedir/pg_wal or basedir/pg_xlog as the directory entry in the
+		 * tar file may arrive later.
 		 */
 		snprintf(statusdir, sizeof(statusdir), "%s/%s/archive_status",
 				 basedir,
@@ -638,7 +643,7 @@ StartLogStreamer(char *startpos, uint32 timeline, char *sysidentifier)
 /*
  * Verify that the given directory exists and is empty. If it does not
  * exist, it is created. If it exists but is not empty, an error will
- * be give and the process ended.
+ * be given and the process ended.
  */
 static void
 verify_dir_is_empty_or_create(char *dirname, bool *created, bool *found)
@@ -766,8 +771,8 @@ progress_report(int tablespacenum, const char *filename, bool force)
 					tablespacenum, tablespacecount,
 			/* Prefix with "..." if we do leading truncation */
 					truncate ? "..." : "",
-			truncate ? VERBOSE_FILENAME_LENGTH - 3 : VERBOSE_FILENAME_LENGTH,
-			truncate ? VERBOSE_FILENAME_LENGTH - 3 : VERBOSE_FILENAME_LENGTH,
+					truncate ? VERBOSE_FILENAME_LENGTH - 3 : VERBOSE_FILENAME_LENGTH,
+					truncate ? VERBOSE_FILENAME_LENGTH - 3 : VERBOSE_FILENAME_LENGTH,
 			/* Truncate filename at beginning if it's too long */
 					truncate ? filename + strlen(filename) - VERBOSE_FILENAME_LENGTH + 3 : filename);
 		}
@@ -1107,7 +1112,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 				if (gzclose(ztarfile) != 0)
 				{
 					fprintf(stderr,
-					   _("%s: could not close compressed file \"%s\": %s\n"),
+							_("%s: could not close compressed file \"%s\": %s\n"),
 							progname, filename, get_gz_error(ztarfile));
 					disconnect_and_exit(1);
 				}
@@ -1393,25 +1398,25 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					/*
 					 * Directory
 					 */
-					filename[strlen(filename) - 1] = '\0';		/* Remove trailing slash */
+					filename[strlen(filename) - 1] = '\0';	/* Remove trailing slash */
 					if (mkdir(filename, S_IRWXU) != 0)
 					{
 						/*
 						 * When streaming WAL, pg_wal (or pg_xlog for pre-9.6
-						 * clusters) will have been created by the wal receiver
-						 * process. Also, when transaction log directory location
-						 * was specified, pg_wal (or pg_xlog) has already been
-						 * created as a symbolic link before starting the actual
-						 * backup. So just ignore creation failures on related
-						 * directories.
+						 * clusters) will have been created by the wal
+						 * receiver process. Also, when the WAL directory
+						 * location was specified, pg_wal (or pg_xlog) has
+						 * already been created as a symbolic link before
+						 * starting the actual backup. So just ignore creation
+						 * failures on related directories.
 						 */
 						if (!((pg_str_endswith(filename, "/pg_wal") ||
-							   pg_str_endswith(filename, "/pg_xlog")||
+							   pg_str_endswith(filename, "/pg_xlog") ||
 							   pg_str_endswith(filename, "/archive_status")) &&
 							  errno == EEXIST))
 						{
 							fprintf(stderr,
-							_("%s: could not create directory \"%s\": %s\n"),
+									_("%s: could not create directory \"%s\": %s\n"),
 									progname, filename, strerror(errno));
 							disconnect_and_exit(1);
 						}
@@ -1437,7 +1442,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					 * are, you can call it an undocumented feature that you
 					 * can map them too.)
 					 */
-					filename[strlen(filename) - 1] = '\0';		/* Remove trailing slash */
+					filename[strlen(filename) - 1] = '\0';	/* Remove trailing slash */
 
 					mapped_tblspc_path = get_tablespace_mapping(&copybuf[157]);
 					if (symlink(mapped_tblspc_path, filename) != 0)
@@ -1757,7 +1762,7 @@ BaseBackup(void)
 				progname);
 
 	if (showprogress && !verbose)
-		fprintf(stderr, "waiting for checkpoint\n");
+		fprintf(stderr, "waiting for checkpoint\r");
 
 	basebkp =
 		psprintf("BASE_BACKUP LABEL '%s' %s %s %s %s %s %s",
@@ -1777,7 +1782,7 @@ BaseBackup(void)
 	}
 
 	/*
-	 * Get the starting xlog position
+	 * Get the starting WAL location
 	 */
 	res = PQgetResult(conn);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
@@ -1812,7 +1817,7 @@ BaseBackup(void)
 	MemSet(xlogend, 0, sizeof(xlogend));
 
 	if (verbose && includewal != NO_WAL)
-		fprintf(stderr, _("%s: transaction log start point: %s on timeline %u\n"),
+		fprintf(stderr, _("%s: write-ahead log start point: %s on timeline %u\n"),
 				progname, xlogstart, starttli);
 
 	/*
@@ -1902,20 +1907,20 @@ BaseBackup(void)
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
 		fprintf(stderr,
-		 _("%s: could not get transaction log end position from server: %s"),
+				_("%s: could not get write-ahead log end position from server: %s"),
 				progname, PQerrorMessage(conn));
 		disconnect_and_exit(1);
 	}
 	if (PQntuples(res) != 1)
 	{
 		fprintf(stderr,
-			 _("%s: no transaction log end position returned from server\n"),
+				_("%s: no write-ahead log end position returned from server\n"),
 				progname);
 		disconnect_and_exit(1);
 	}
 	strlcpy(xlogend, PQgetvalue(res, 0, 0), sizeof(xlogend));
 	if (verbose && includewal != NO_WAL)
-		fprintf(stderr, _("%s: transaction log end point: %s\n"), progname, xlogend);
+		fprintf(stderr, _("%s: write-ahead log end point: %s\n"), progname, xlogend);
 	PQclear(res);
 
 	res = PQgetResult(conn);
@@ -1993,7 +1998,7 @@ BaseBackup(void)
 		if (sscanf(xlogend, "%X/%X", &hi, &lo) != 2)
 		{
 			fprintf(stderr,
-				  _("%s: could not parse transaction log location \"%s\"\n"),
+					_("%s: could not parse write-ahead log location \"%s\"\n"),
 					progname, xlogend);
 			disconnect_and_exit(1);
 		}
@@ -2036,11 +2041,11 @@ BaseBackup(void)
 	PQfinish(conn);
 
 	/*
-	 * Make data persistent on disk once backup is completed. For tar
-	 * format once syncing the parent directory is fine, each tar file
-	 * created per tablespace has been already synced. In plain format,
-	 * all the data of the base directory is synced, taking into account
-	 * all the tablespaces. Errors are not considered fatal.
+	 * Make data persistent on disk once backup is completed. For tar format
+	 * once syncing the parent directory is fine, each tar file created per
+	 * tablespace has been already synced. In plain format, all the data of
+	 * the base directory is synced, taking into account all the tablespaces.
+	 * Errors are not considered fatal.
 	 */
 	if (do_sync)
 	{
@@ -2166,7 +2171,7 @@ main(int argc, char **argv)
 					includewal = NO_WAL;
 				}
 				else if (strcmp(optarg, "f") == 0 ||
-					strcmp(optarg, "fetch") == 0)
+						 strcmp(optarg, "fetch") == 0)
 				{
 					includewal = FETCH_WAL;
 				}
@@ -2178,7 +2183,7 @@ main(int argc, char **argv)
 				else
 				{
 					fprintf(stderr,
-							_("%s: invalid wal-method option \"%s\", must be \"fetch\", \"stream\" or \"none\"\n"),
+							_("%s: invalid wal-method option \"%s\", must be \"fetch\", \"stream\", or \"none\"\n"),
 							progname, optarg);
 					exit(1);
 				}
@@ -2199,7 +2204,7 @@ main(int argc, char **argv)
 #ifdef HAVE_LIBZ
 				compresslevel = Z_DEFAULT_COMPRESSION;
 #else
-				compresslevel = 1;		/* will be rejected below */
+				compresslevel = 1;	/* will be rejected below */
 #endif
 				break;
 			case 'Z':
@@ -2307,7 +2312,7 @@ main(int argc, char **argv)
 	if (format == 't' && includewal == STREAM_WAL && strcmp(basedir, "-") == 0)
 	{
 		fprintf(stderr,
-			_("%s: cannot stream transaction logs in tar mode to stdout\n"),
+				_("%s: cannot stream write-ahead logs in tar mode to stdout\n"),
 				progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 				progname);
@@ -2317,7 +2322,7 @@ main(int argc, char **argv)
 	if (replication_slot && includewal != STREAM_WAL)
 	{
 		fprintf(stderr,
-			_("%s: replication slots can only be used with WAL streaming\n"),
+				_("%s: replication slots can only be used with WAL streaming\n"),
 				progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 				progname);
@@ -2343,7 +2348,7 @@ main(int argc, char **argv)
 		if (format != 'p')
 		{
 			fprintf(stderr,
-					_("%s: transaction log directory location can only be specified in plain mode\n"),
+					_("%s: WAL directory location can only be specified in plain mode\n"),
 					progname);
 			fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 					progname);
@@ -2354,7 +2359,7 @@ main(int argc, char **argv)
 		canonicalize_path(xlog_dir);
 		if (!is_absolute_path(xlog_dir))
 		{
-			fprintf(stderr, _("%s: transaction log directory location must be "
+			fprintf(stderr, _("%s: WAL directory location must be "
 							  "an absolute path\n"), progname);
 			fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 					progname);
@@ -2388,7 +2393,7 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
-	/* Create transaction log symlink, if required */
+	/* Create pg_wal symlink, if required */
 	if (strcmp(xlog_dir, "") != 0)
 	{
 		char	   *linkloc;
@@ -2396,12 +2401,12 @@ main(int argc, char **argv)
 		verify_dir_is_empty_or_create(xlog_dir, &made_new_xlogdir, &found_existing_xlogdir);
 
 		/*
-		 * Form name of the place where the symlink must go. pg_xlog has
-		 * been renamed to pg_wal in post-10 clusters.
+		 * Form name of the place where the symlink must go. pg_xlog has been
+		 * renamed to pg_wal in post-10 clusters.
 		 */
 		linkloc = psprintf("%s/%s", basedir,
 						   PQserverVersion(conn) < MINIMUM_VERSION_FOR_PG_WAL ?
-								"pg_xlog" : "pg_wal");
+						   "pg_xlog" : "pg_wal");
 
 #ifdef HAVE_SYMLINK
 		if (symlink(xlog_dir, linkloc) != 0)

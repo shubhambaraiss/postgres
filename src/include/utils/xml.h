@@ -28,19 +28,19 @@ typedef enum
 	XML_STANDALONE_NO,
 	XML_STANDALONE_NO_VALUE,
 	XML_STANDALONE_OMITTED
-}	XmlStandaloneType;
+}			XmlStandaloneType;
 
 typedef enum
 {
 	XMLBINARY_BASE64,
 	XMLBINARY_HEX
-}	XmlBinaryType;
+}			XmlBinaryType;
 
 typedef enum
 {
 	PG_XML_STRICTNESS_LEGACY,	/* ignore errors unless function result
 								 * indicates error condition */
-	PG_XML_STRICTNESS_WELLFORMED,		/* ignore non-parser messages */
+	PG_XML_STRICTNESS_WELLFORMED,	/* ignore non-parser messages */
 	PG_XML_STRICTNESS_ALL		/* report all notices/warnings/errors */
 } PgXmlStrictness;
 
@@ -61,7 +61,9 @@ extern void xml_ereport(PgXmlErrorContext *errcxt, int level, int sqlcode,
 			const char *msg);
 
 extern xmltype *xmlconcat(List *args);
-extern xmltype *xmlelement(XmlExprState *xmlExpr, ExprContext *econtext);
+extern xmltype *xmlelement(XmlExpr *xexpr,
+		   Datum *named_argvalue, bool *named_argnull,
+		   Datum *argvalue, bool *argnull);
 extern xmltype *xmlparse(text *data, XmlOptionType xmloption, bool preserve_whitespace);
 extern xmltype *xmlpi(char *target, text *arg, bool arg_is_null, bool *result_is_null);
 extern xmltype *xmlroot(xmltype *data, text *version, int standalone);
@@ -79,4 +81,4 @@ extern int	xmloption;			/* XmlOptionType, but int for guc enum */
 
 extern const TableFuncRoutine XmlTableRoutine;
 
-#endif   /* XML_H */
+#endif							/* XML_H */

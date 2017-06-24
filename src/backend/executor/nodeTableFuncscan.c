@@ -139,12 +139,8 @@ ExecInitTableFuncScan(TableFuncScan *node, EState *estate, int eflags)
 	/*
 	 * initialize child expressions
 	 */
-	scanstate->ss.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.targetlist,
-					 (PlanState *) scanstate);
-	scanstate->ss.ps.qual = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.qual,
-					 (PlanState *) scanstate);
+	scanstate->ss.ps.qual =
+		ExecInitQual(node->scan.plan.qual, &scanstate->ss.ps);
 
 	/*
 	 * tuple table initialization
@@ -179,16 +175,16 @@ ExecInitTableFuncScan(TableFuncScan *node, EState *estate, int eflags)
 
 	scanstate->ns_names = tf->ns_names;
 
-	scanstate->ns_uris = (List *)
-		ExecInitExpr((Expr *) tf->ns_uris, (PlanState *) scanstate);
+	scanstate->ns_uris =
+		ExecInitExprList(tf->ns_uris, (PlanState *) scanstate);
 	scanstate->docexpr =
 		ExecInitExpr((Expr *) tf->docexpr, (PlanState *) scanstate);
 	scanstate->rowexpr =
 		ExecInitExpr((Expr *) tf->rowexpr, (PlanState *) scanstate);
-	scanstate->colexprs = (List *)
-		ExecInitExpr((Expr *) tf->colexprs, (PlanState *) scanstate);
-	scanstate->coldefexprs = (List *)
-		ExecInitExpr((Expr *) tf->coldefexprs, (PlanState *) scanstate);
+	scanstate->colexprs =
+		ExecInitExprList(tf->colexprs, (PlanState *) scanstate);
+	scanstate->coldefexprs =
+		ExecInitExprList(tf->coldefexprs, (PlanState *) scanstate);
 
 	scanstate->notnulls = tf->notnulls;
 
@@ -347,7 +343,7 @@ tfuncInitialize(TableFuncScanState *tstate, ExprContext *econtext, Datum doc)
 	int			colno;
 	Datum		value;
 	int			ordinalitycol =
-		((TableFuncScan *) (tstate->ss.ps.plan))->tablefunc->ordinalitycol;
+	((TableFuncScan *) (tstate->ss.ps.plan))->tablefunc->ordinalitycol;
 
 	/*
 	 * Install the document as a possibly-toasted Datum into the tablefunc
@@ -402,9 +398,9 @@ tfuncInitialize(TableFuncScanState *tstate, ExprContext *econtext, Datum doc)
 				if (isnull)
 					ereport(ERROR,
 							(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-						 errmsg("column filter expression must not be null"),
+							 errmsg("column filter expression must not be null"),
 							 errdetail("Filter for column \"%s\" is null.",
-								  NameStr(tupdesc->attrs[colno]->attname))));
+									   NameStr(tupdesc->attrs[colno]->attname))));
 				colfilter = TextDatumGetCString(value);
 			}
 			else
@@ -447,8 +443,8 @@ tfuncLoadRows(TableFuncScanState *tstate, ExprContext *econtext)
 		ExecClearTuple(tstate->ss.ss_ScanTupleSlot);
 
 		/*
-		 * Obtain the value of each column for this row, installing them into the
-		 * slot; then add the tuple to the tuplestore.
+		 * Obtain the value of each column for this row, installing them into
+		 * the slot; then add the tuple to the tuplestore.
 		 */
 		for (colno = 0; colno < natts; colno++)
 		{
@@ -460,7 +456,7 @@ tfuncLoadRows(TableFuncScanState *tstate, ExprContext *econtext)
 			}
 			else
 			{
-				bool	isnull;
+				bool		isnull;
 
 				values[colno] = routine->GetValue(tstate,
 												  colno,

@@ -244,7 +244,7 @@ process_equivalence(PlannerInfo *root, RestrictInfo *restrictinfo,
 		{
 			EquivalenceMember *cur_em = (EquivalenceMember *) lfirst(lc2);
 
-			Assert(!cur_em->em_is_child);		/* no children yet */
+			Assert(!cur_em->em_is_child);	/* no children yet */
 
 			/*
 			 * If below an outer join, don't match constants: they're not as
@@ -1060,10 +1060,12 @@ generate_join_implied_equalities_for_ecs(PlannerInfo *root,
 	ListCell   *lc;
 
 	/* If inner rel is a child, extra setup work is needed */
-	if (inner_rel->reloptkind == RELOPT_OTHER_MEMBER_REL)
+	if (IS_OTHER_REL(inner_rel))
 	{
+		Assert(!bms_is_empty(inner_rel->top_parent_relids));
+
 		/* Fetch relid set for the topmost parent rel */
-		nominal_inner_relids = find_childrel_top_parent(root, inner_rel)->relids;
+		nominal_inner_relids = inner_rel->top_parent_relids;
 		/* ECs will be marked with the parent's relid, not the child's */
 		nominal_join_relids = bms_union(outer_relids, nominal_inner_relids);
 	}
@@ -1101,9 +1103,9 @@ generate_join_implied_equalities_for_ecs(PlannerInfo *root,
 		if (ec->ec_broken)
 			sublist = generate_join_implied_equalities_broken(root,
 															  ec,
-														 nominal_join_relids,
+															  nominal_join_relids,
 															  outer_relids,
-														nominal_inner_relids,
+															  nominal_inner_relids,
 															  inner_rel);
 
 		result = list_concat(result, sublist);
@@ -1324,8 +1326,7 @@ generate_join_implied_equalities_broken(PlannerInfo *root,
 	 * mentioned in the ec_sources clauses, we have to be prepared to apply
 	 * multiple levels of Var translation.
 	 */
-	if (inner_rel->reloptkind == RELOPT_OTHER_MEMBER_REL &&
-		result != NIL)
+	if (IS_OTHER_REL(inner_rel) && result != NIL)
 		result = (List *) adjust_appendrel_attrs_multilevel(root,
 															(Node *) result,
 															inner_rel);
@@ -1425,7 +1426,7 @@ create_join_clause(PlannerInfo *root,
 										bms_union(leftem->em_relids,
 												  rightem->em_relids),
 										bms_union(leftem->em_nullable_relids,
-												rightem->em_nullable_relids),
+												  rightem->em_nullable_relids),
 										ec->ec_min_security);
 
 	/* Mark the clause as redundant, or not */
@@ -1703,7 +1704,7 @@ reconsider_outer_join_clause(PlannerInfo *root, RestrictInfo *rinfo,
 		{
 			EquivalenceMember *cur_em = (EquivalenceMember *) lfirst(lc2);
 
-			Assert(!cur_em->em_is_child);		/* no children yet */
+			Assert(!cur_em->em_is_child);	/* no children yet */
 			if (equal(outervar, cur_em->em_expr))
 			{
 				match = true;
@@ -1737,7 +1738,7 @@ reconsider_outer_join_clause(PlannerInfo *root, RestrictInfo *rinfo,
 												   innervar,
 												   cur_em->em_expr,
 												   bms_copy(inner_relids),
-											 bms_copy(inner_nullable_relids),
+												   bms_copy(inner_nullable_relids),
 												   cur_ec->ec_min_security);
 			if (process_equivalence(root, newrinfo, true))
 				match = true;
@@ -1833,7 +1834,7 @@ reconsider_full_join_clause(PlannerInfo *root, RestrictInfo *rinfo)
 		foreach(lc2, cur_ec->ec_members)
 		{
 			coal_em = (EquivalenceMember *) lfirst(lc2);
-			Assert(!coal_em->em_is_child);		/* no children yet */
+			Assert(!coal_em->em_is_child);	/* no children yet */
 			if (IsA(coal_em->em_expr, CoalesceExpr))
 			{
 				CoalesceExpr *cexpr = (CoalesceExpr *) coal_em->em_expr;
@@ -1880,8 +1881,8 @@ reconsider_full_join_clause(PlannerInfo *root, RestrictInfo *rinfo)
 													   leftvar,
 													   cur_em->em_expr,
 													   bms_copy(left_relids),
-											  bms_copy(left_nullable_relids),
-													cur_ec->ec_min_security);
+													   bms_copy(left_nullable_relids),
+													   cur_ec->ec_min_security);
 				if (process_equivalence(root, newrinfo, true))
 					matchleft = true;
 			}
@@ -1895,8 +1896,8 @@ reconsider_full_join_clause(PlannerInfo *root, RestrictInfo *rinfo)
 													   rightvar,
 													   cur_em->em_expr,
 													   bms_copy(right_relids),
-											 bms_copy(right_nullable_relids),
-													cur_ec->ec_min_security);
+													   bms_copy(right_nullable_relids),
+													   cur_ec->ec_min_security);
 				if (process_equivalence(root, newrinfo, true))
 					matchright = true;
 			}
@@ -1996,7 +1997,7 @@ match_eclasses_to_foreign_key_col(PlannerInfo *root,
 	Index		var2varno = fkinfo->ref_relid;
 	AttrNumber	var2attno = fkinfo->confkey[colno];
 	Oid			eqop = fkinfo->conpfeqop[colno];
-	List	   *opfamilies = NIL;		/* compute only if needed */
+	List	   *opfamilies = NIL;	/* compute only if needed */
 	ListCell   *lc1;
 
 	foreach(lc1, root->eq_classes)
@@ -2179,6 +2180,9 @@ generate_implied_equalities_for_column(PlannerInfo *root,
 	bool		is_child_rel = (rel->reloptkind == RELOPT_OTHER_MEMBER_REL);
 	Relids		parent_relids;
 	ListCell   *lc1;
+
+	/* Indexes are available only on base or "other" member relations. */
+	Assert(IS_SIMPLE_REL(rel));
 
 	/* If it's a child rel, we'll need to know what its parent(s) are */
 	if (is_child_rel)
@@ -2413,8 +2417,11 @@ eclass_useful_for_merging(PlannerInfo *root,
 	 */
 
 	/* If specified rel is a child, we must consider the topmost parent rel */
-	if (rel->reloptkind == RELOPT_OTHER_MEMBER_REL)
-		relids = find_childrel_top_parent(root, rel)->relids;
+	if (IS_OTHER_REL(rel))
+	{
+		Assert(!bms_is_empty(rel->top_parent_relids));
+		relids = rel->top_parent_relids;
+	}
 	else
 		relids = rel->relids;
 

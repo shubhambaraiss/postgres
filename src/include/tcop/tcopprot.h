@@ -24,6 +24,7 @@
 #include "nodes/plannodes.h"
 #include "storage/procsignal.h"
 #include "utils/guc.h"
+#include "utils/queryenvironment.h"
 
 
 /* Required daylight between max_stack_depth and the kernel limit, in bytes */
@@ -49,11 +50,13 @@ extern int	log_statement;
 extern List *pg_parse_query(const char *query_string);
 extern List *pg_analyze_and_rewrite(RawStmt *parsetree,
 					   const char *query_string,
-					   Oid *paramTypes, int numParams);
+					   Oid *paramTypes, int numParams,
+					   QueryEnvironment *queryEnv);
 extern List *pg_analyze_and_rewrite_params(RawStmt *parsetree,
 							  const char *query_string,
 							  ParserSetupHook parserSetup,
-							  void *parserSetupArg);
+							  void *parserSetupArg,
+							  QueryEnvironment *queryEnv);
 extern PlannedStmt *pg_plan_query(Query *querytree, int cursorOptions,
 			  ParamListInfo boundParams);
 extern List *pg_plan_queries(List *querytrees, int cursorOptions,
@@ -86,4 +89,4 @@ extern bool set_plan_disabling_options(const char *arg,
 						   GucContext context, GucSource source);
 extern const char *get_stats_option_name(const char *arg);
 
-#endif   /* TCOPPROT_H */
+#endif							/* TCOPPROT_H */

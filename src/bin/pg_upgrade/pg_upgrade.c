@@ -48,7 +48,7 @@
 static void prepare_new_cluster(void);
 static void prepare_new_databases(void);
 static void create_new_objects(void);
-static void copy_clog_xlog_xid(void);
+static void copy_xact_xlog_xid(void);
 static void set_frozenxids(bool minmxid_only);
 static void setup(char *argv0, bool *live_check);
 static void cleanup(void);
@@ -115,7 +115,7 @@ main(int argc, char **argv)
 	 * Destructive Changes to New Cluster
 	 */
 
-	copy_clog_xlog_xid();
+	copy_xact_xlog_xid();
 
 	/* New now using xids of the old system */
 
@@ -162,7 +162,7 @@ main(int argc, char **argv)
 	create_script_for_cluster_analyze(&analyze_script_file_name);
 	create_script_for_old_cluster_deletion(&deletion_script_file_name);
 
-	issue_warnings();
+	issue_warnings_and_set_wal_level();
 
 	pg_log(PG_REPORT, "\nUpgrade Complete\n");
 	pg_log(PG_REPORT, "----------------\n");
@@ -328,7 +328,7 @@ create_new_objects(void)
 		 */
 		parallel_exec_prog(log_file_name,
 						   NULL,
-		 "\"%s/pg_restore\" %s --exit-on-error --verbose --dbname %s \"%s\"",
+						   "\"%s/pg_restore\" %s --exit-on-error --verbose --dbname %s \"%s\"",
 						   new_cluster.bindir,
 						   cluster_conn_opts(&new_cluster),
 						   escaped_connstr.data,
@@ -376,17 +376,17 @@ remove_new_subdir(char *subdir, bool rmtopdir)
  * Copy the files from the old cluster into it
  */
 static void
-copy_subdir_files(char *subdir)
+copy_subdir_files(char *old_subdir, char *new_subdir)
 {
 	char		old_path[MAXPGPATH];
 	char		new_path[MAXPGPATH];
 
-	remove_new_subdir(subdir, true);
+	remove_new_subdir(new_subdir, true);
 
-	snprintf(old_path, sizeof(old_path), "%s/%s", old_cluster.pgdata, subdir);
-	snprintf(new_path, sizeof(new_path), "%s/%s", new_cluster.pgdata, subdir);
+	snprintf(old_path, sizeof(old_path), "%s/%s", old_cluster.pgdata, old_subdir);
+	snprintf(new_path, sizeof(new_path), "%s/%s", new_cluster.pgdata, new_subdir);
 
-	prep_status("Copying old %s to new server", subdir);
+	prep_status("Copying old %s to new server", old_subdir);
 
 	exec_prog(UTILITY_LOG_FILE, NULL, true,
 #ifndef WIN32
@@ -401,10 +401,16 @@ copy_subdir_files(char *subdir)
 }
 
 static void
-copy_clog_xlog_xid(void)
+copy_xact_xlog_xid(void)
 {
-	/* copy old commit logs to new data dir */
-	copy_subdir_files("pg_clog");
+	/*
+	 * Copy old commit logs to new data dir. pg_clog has been renamed to
+	 * pg_xact in post-10 clusters.
+	 */
+	copy_subdir_files(GET_MAJOR_VERSION(old_cluster.major_version) < 1000 ?
+					  "pg_clog" : "pg_xact",
+					  GET_MAJOR_VERSION(new_cluster.major_version) < 1000 ?
+					  "pg_clog" : "pg_xact");
 
 	/* set the next transaction id and epoch of the new cluster */
 	prep_status("Setting next transaction ID and epoch for new cluster");
@@ -434,8 +440,8 @@ copy_clog_xlog_xid(void)
 	if (old_cluster.controldata.cat_ver >= MULTIXACT_FORMATCHANGE_CAT_VER &&
 		new_cluster.controldata.cat_ver >= MULTIXACT_FORMATCHANGE_CAT_VER)
 	{
-		copy_subdir_files("pg_multixact/offsets");
-		copy_subdir_files("pg_multixact/members");
+		copy_subdir_files("pg_multixact/offsets", "pg_multixact/offsets");
+		copy_subdir_files("pg_multixact/members", "pg_multixact/members");
 
 		prep_status("Setting next multixact ID and offset for new cluster");
 
@@ -555,7 +561,7 @@ set_frozenxids(bool minmxid_only)
 		 */
 		if (strcmp(datallowconn, "f") == 0)
 			PQclear(executeQueryOrDie(conn_template1,
-								"ALTER DATABASE %s ALLOW_CONNECTIONS = true",
+									  "ALTER DATABASE %s ALLOW_CONNECTIONS = true",
 									  quote_identifier(datname)));
 
 		conn = connectToServer(&new_cluster, datname);
@@ -587,7 +593,7 @@ set_frozenxids(bool minmxid_only)
 		/* Reset datallowconn flag */
 		if (strcmp(datallowconn, "f") == 0)
 			PQclear(executeQueryOrDie(conn_template1,
-							   "ALTER DATABASE %s ALLOW_CONNECTIONS = false",
+									  "ALTER DATABASE %s ALLOW_CONNECTIONS = false",
 									  quote_identifier(datname)));
 	}
 

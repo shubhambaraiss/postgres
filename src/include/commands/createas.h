@@ -18,13 +18,14 @@
 #include "nodes/params.h"
 #include "nodes/parsenodes.h"
 #include "tcop/dest.h"
+#include "utils/queryenvironment.h"
 
 
 extern ObjectAddress ExecCreateTableAs(CreateTableAsStmt *stmt, const char *queryString,
-				  ParamListInfo params, char *completionTag);
+				  ParamListInfo params, QueryEnvironment *queryEnv, char *completionTag);
 
 extern int	GetIntoRelEFlags(IntoClause *intoClause);
 
 extern DestReceiver *CreateIntoRelDestReceiver(IntoClause *intoClause);
 
-#endif   /* CREATEAS_H */
+#endif							/* CREATEAS_H */

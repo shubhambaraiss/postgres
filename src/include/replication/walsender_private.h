@@ -24,7 +24,8 @@ typedef enum WalSndState
 	WALSNDSTATE_STARTUP = 0,
 	WALSNDSTATE_BACKUP,
 	WALSNDSTATE_CATCHUP,
-	WALSNDSTATE_STREAMING
+	WALSNDSTATE_STREAMING,
+	WALSNDSTATE_STOPPING
 } WalSndState;
 
 /*
@@ -46,6 +47,11 @@ typedef struct WalSnd
 	XLogRecPtr	write;
 	XLogRecPtr	flush;
 	XLogRecPtr	apply;
+
+	/* Measured lag times, or -1 for unknown/none. */
+	TimeOffset	writeLag;
+	TimeOffset	flushLag;
+	TimeOffset	applyLag;
 
 	/* Protects shared variables shown above. */
 	slock_t		mutex;
@@ -108,4 +114,4 @@ extern void replication_scanner_finish(void);
 
 extern Node *replication_parse_result;
 
-#endif   /* _WALSENDER_PRIVATE_H */
+#endif							/* _WALSENDER_PRIVATE_H */

@@ -64,8 +64,8 @@ ExecNestLoop(NestLoopState *node)
 	PlanState  *outerPlan;
 	TupleTableSlot *outerTupleSlot;
 	TupleTableSlot *innerTupleSlot;
-	List	   *joinqual;
-	List	   *otherqual;
+	ExprState  *joinqual;
+	ExprState  *otherqual;
 	ExprContext *econtext;
 	ListCell   *lc;
 
@@ -176,7 +176,7 @@ ExecNestLoop(NestLoopState *node)
 
 				ENL1_printf("testing qualification for outer-join tuple");
 
-				if (otherqual == NIL || ExecQual(otherqual, econtext, false))
+				if (otherqual == NULL || ExecQual(otherqual, econtext))
 				{
 					/*
 					 * qualification was satisfied so we project and return
@@ -207,7 +207,7 @@ ExecNestLoop(NestLoopState *node)
 		 */
 		ENL1_printf("testing qualification");
 
-		if (ExecQual(joinqual, econtext, false))
+		if (ExecQual(joinqual, econtext))
 		{
 			node->nl_MatchedOuter = true;
 
@@ -219,13 +219,14 @@ ExecNestLoop(NestLoopState *node)
 			}
 
 			/*
-			 * In a semijoin, we'll consider returning the first match, but
-			 * after that we're done with this outer tuple.
+			 * If we only need to join to the first matching inner tuple, then
+			 * consider returning this one, but after that continue with next
+			 * outer tuple.
 			 */
-			if (node->js.jointype == JOIN_SEMI)
+			if (node->js.single_match)
 				node->nl_NeedNewOuter = true;
 
-			if (otherqual == NIL || ExecQual(otherqual, econtext, false))
+			if (otherqual == NULL || ExecQual(otherqual, econtext))
 			{
 				/*
 				 * qualification was satisfied so we project and return the
@@ -282,16 +283,11 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	/*
 	 * initialize child expressions
 	 */
-	nlstate->js.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->join.plan.targetlist,
-					 (PlanState *) nlstate);
-	nlstate->js.ps.qual = (List *)
-		ExecInitExpr((Expr *) node->join.plan.qual,
-					 (PlanState *) nlstate);
+	nlstate->js.ps.qual =
+		ExecInitQual(node->join.plan.qual, (PlanState *) nlstate);
 	nlstate->js.jointype = node->join.jointype;
-	nlstate->js.joinqual = (List *)
-		ExecInitExpr((Expr *) node->join.joinqual,
-					 (PlanState *) nlstate);
+	nlstate->js.joinqual =
+		ExecInitQual(node->join.joinqual, (PlanState *) nlstate);
 
 	/*
 	 * initialize child nodes
@@ -314,6 +310,13 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	 */
 	ExecInitResultTupleSlot(estate, &nlstate->js.ps);
 
+	/*
+	 * detect whether we need only consider the first matching inner tuple
+	 */
+	nlstate->js.single_match = (node->join.inner_unique ||
+								node->join.jointype == JOIN_SEMI);
+
+	/* set up null tuples for outer joins, if needed */
 	switch (node->join.jointype)
 	{
 		case JOIN_INNER:
@@ -323,7 +326,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 		case JOIN_ANTI:
 			nlstate->nl_NullInnerTupleSlot =
 				ExecInitNullTupleSlot(estate,
-								 ExecGetResultType(innerPlanState(nlstate)));
+									  ExecGetResultType(innerPlanState(nlstate)));
 			break;
 		default:
 			elog(ERROR, "unrecognized join type: %d",

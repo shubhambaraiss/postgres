@@ -75,7 +75,7 @@ typedef struct GinState
 	FmgrInfo	extractQueryFn[INDEX_MAX_KEYS];
 	FmgrInfo	consistentFn[INDEX_MAX_KEYS];
 	FmgrInfo	triConsistentFn[INDEX_MAX_KEYS];
-	FmgrInfo	comparePartialFn[INDEX_MAX_KEYS];		/* optional method */
+	FmgrInfo	comparePartialFn[INDEX_MAX_KEYS];	/* optional method */
 	/* canPartialMatch[i] is true if comparePartialFn[i] is valid */
 	bool		canPartialMatch[INDEX_MAX_KEYS];
 	/* Collations to pass to the support functions */
@@ -95,7 +95,7 @@ extern int ginCompareEntries(GinState *ginstate, OffsetNumber attnum,
 				  Datum b, GinNullCategory categoryb);
 extern int ginCompareAttEntries(GinState *ginstate,
 					 OffsetNumber attnuma, Datum a, GinNullCategory categorya,
-				   OffsetNumber attnumb, Datum b, GinNullCategory categoryb);
+					 OffsetNumber attnumb, Datum b, GinNullCategory categoryb);
 extern Datum *ginExtractEntries(GinState *ginstate, OffsetNumber attnum,
 				  Datum value, bool isNull,
 				  int32 *nentries, GinNullCategory **categories);
@@ -281,7 +281,7 @@ typedef struct GinScanKeyData
 	int			nadditional;
 
 	/* array of check flags, reported to consistentFn */
-	bool	   *entryRes;
+	GinTernaryValue *entryRes;
 	bool		(*boolConsistentFn) (GinScanKey key);
 	GinTernaryValue (*triConsistentFn) (GinScanKey key);
 	FmgrInfo   *consistentFmgrInfo;
@@ -309,7 +309,7 @@ typedef struct GinScanKeyData
 	bool		curItemMatches;
 	bool		recheckCurItem;
 	bool		isFinished;
-}	GinScanKeyData;
+}			GinScanKeyData;
 
 typedef struct GinScanEntryData
 {
@@ -342,7 +342,7 @@ typedef struct GinScanEntryData
 	bool		reduceResult;
 	uint32		predictNumberResult;
 	GinBtreeData btree;
-}	GinScanEntryData;
+}			GinScanEntryData;
 
 typedef struct GinScanOpaqueData
 {
@@ -460,8 +460,8 @@ extern ItemPointer ginMergeItemPointers(ItemPointerData *a, uint32 na,
 static inline int
 ginCompareItemPointers(ItemPointer a, ItemPointer b)
 {
-	uint64		ia = (uint64) a->ip_blkid.bi_hi << 32 | (uint64) a->ip_blkid.bi_lo << 16 | a->ip_posid;
-	uint64		ib = (uint64) b->ip_blkid.bi_hi << 32 | (uint64) b->ip_blkid.bi_lo << 16 | b->ip_posid;
+	uint64		ia = (uint64) GinItemPointerGetBlockNumber(a) << 32 | GinItemPointerGetOffsetNumber(a);
+	uint64		ib = (uint64) GinItemPointerGetBlockNumber(b) << 32 | GinItemPointerGetOffsetNumber(b);
 
 	if (ia == ib)
 		return 0;
@@ -471,4 +471,6 @@ ginCompareItemPointers(ItemPointer a, ItemPointer b)
 		return -1;
 }
 
-#endif   /* GIN_PRIVATE_H */
+extern int	ginTraverseLock(Buffer buffer, bool searchMode);
+
+#endif							/* GIN_PRIVATE_H */

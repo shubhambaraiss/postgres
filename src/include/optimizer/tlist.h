@@ -17,8 +17,8 @@
 #include "nodes/relation.h"
 
 
-extern TargetEntry *tlist_member(Node *node, List *targetlist);
-extern TargetEntry *tlist_member_ignore_relabel(Node *node, List *targetlist);
+extern TargetEntry *tlist_member(Expr *node, List *targetlist);
+extern TargetEntry *tlist_member_ignore_relabel(Expr *node, List *targetlist);
 
 extern List *add_to_flat_tlist(List *tlist, List *exprs);
 
@@ -69,4 +69,4 @@ extern void split_pathtarget_at_srfs(PlannerInfo *root,
 #define create_pathtarget(root, tlist) \
 	set_pathtarget_cost_width(root, make_pathtarget_from_tlist(tlist))
 
-#endif   /* TLIST_H */
+#endif							/* TLIST_H */

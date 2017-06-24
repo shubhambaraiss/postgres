@@ -84,7 +84,7 @@
 #ssl_key_file = 'server.key'
 #ssl_ca_file = ''
 #ssl_crl_file = ''
-#password_encryption = md5		# md5, scram or plain
+#password_encryption = md5		# md5, scram-sha-256, or plain
 #db_user_namespace = off
 #row_security = on
 
@@ -162,9 +162,8 @@
 #effective_io_concurrency = 1		# 1-1000; 0 disables prefetching
 #max_worker_processes = 8		# (change requires restart)
 #max_parallel_workers_per_gather = 2	# taken from max_parallel_workers
-#max_parallel_workers = 8	    # maximum number of max_worker_processes that
+#max_parallel_workers = 8		# maximum number of max_worker_processes that
 					# can be used in parallel queries
-#max_logical_replication_workers = 4	# taken from max_worker_processes
 #old_snapshot_threshold = -1		# 1min-60d; -1 disables; 0 is immediate
 					# (change requires restart)
 #backend_flush_after = 0		# measured in pages, 0 disables
@@ -246,7 +245,7 @@
 # These settings are ignored on a standby server.
 
 #synchronous_standby_names = ''	# standby servers that provide sync rep
-				# method to choose sync standbys, number of sync standbys
+				# method to choose sync standbys, number of sync standbys,
 				# and comma-separated list of application_name
 				# from standby(s); '*' = all
 #vacuum_defer_cleanup_age = 0	# number of xacts by which cleanup is delayed
@@ -255,7 +254,7 @@
 
 # These settings are ignored on a master server.
 
-#hot_standby = off			# "on" allows queries during recovery
+#hot_standby = on			# "off" disallows queries during recovery
 					# (change requires restart)
 #max_standby_archive_delay = 30s	# max delay before canceling queries
 					# when reading WAL from archive;
@@ -272,6 +271,13 @@
 					# in milliseconds; 0 disables
 #wal_retrieve_retry_interval = 5s	# time to wait before retrying to
 					# retrieve WAL after a failed attempt
+
+# - Subscribers -
+
+# These settings are ignored on a publisher.
+
+#max_logical_replication_workers = 4	# taken from max_worker_processes
+#max_sync_workers_per_subscription = 2	# taken from max_logical_replication_workers
 
 
 #------------------------------------------------------------------------------
@@ -344,7 +350,7 @@
 					# (change requires restart)
 
 # These are only used if logging_collector is on:
-#log_directory = 'pg_log'		# directory where log files are written,
+#log_directory = 'log'			# directory where log files are written,
 					# can be absolute or relative to PGDATA
 #log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'	# log file name pattern,
 					# can include strftime() escapes
@@ -593,6 +599,10 @@
 					# (change requires restart)
 #max_pred_locks_per_transaction = 64	# min 10
 					# (change requires restart)
+#max_pred_locks_per_relation = -2	# negative values mean
+					# (max_pred_locks_per_transaction
+					#  / -max_pred_locks_per_relation) - 1
+#max_pred_locks_per_page = 2            # min 0
 
 
 #------------------------------------------------------------------------------

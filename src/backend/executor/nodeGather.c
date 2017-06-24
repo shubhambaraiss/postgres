@@ -81,12 +81,8 @@ ExecInitGather(Gather *node, EState *estate, int eflags)
 	/*
 	 * initialize child expressions
 	 */
-	gatherstate->ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->plan.targetlist,
-					 (PlanState *) gatherstate);
-	gatherstate->ps.qual = (List *)
-		ExecInitExpr((Expr *) node->plan.qual,
-					 (PlanState *) gatherstate);
+	gatherstate->ps.qual =
+		ExecInitQual(node->plan.qual, (PlanState *) gatherstate);
 
 	/*
 	 * tuple table initialization
@@ -229,7 +225,7 @@ ExecGather(GatherState *node)
 void
 ExecEndGather(GatherState *node)
 {
-	ExecEndNode(outerPlanState(node));		/* let children clean up first */
+	ExecEndNode(outerPlanState(node));	/* let children clean up first */
 	ExecShutdownGather(node);
 	ExecFreeExprContext(&node->ps);
 	ExecClearTuple(node->ps.ps_ResultTupleSlot);
@@ -262,7 +258,7 @@ gather_getnext(GatherState *gatherstate)
 
 			if (HeapTupleIsValid(tup))
 			{
-				ExecStoreTuple(tup,		/* tuple to store */
+				ExecStoreTuple(tup, /* tuple to store */
 							   fslot,	/* slot in which to store the tuple */
 							   InvalidBuffer,	/* buffer associated with this
 												 * tuple */
