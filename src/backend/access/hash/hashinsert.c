@@ -17,6 +17,7 @@
 
 #include "access/hash.h"
 #include "access/hash_xlog.h"
+#include "storage/predicate.h"
 #include "access/heapam.h"
 #include "miscadmin.h"
 #include "utils/rel.h"
@@ -87,6 +88,8 @@ restart_insert:
 	buf = _hash_getbucketbuf_from_hashkey(rel, hashkey, HASH_WRITE,
 										  &usedmetap);
 	Assert(usedmetap != NULL);
+
+	CheckForSerializableConflictIn(rel, NULL, buf);
 
 	/* remember the primary bucket buffer to release the pin on it at end. */
 	bucket_buf = buf;
