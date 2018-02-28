@@ -17,8 +17,10 @@
 #include "access/gin_private.h"
 #include "access/relscan.h"
 #include "miscadmin.h"
+#include "storage/predicate.h"
 #include "utils/datum.h"
 #include "utils/memutils.h"
+#include "utils/rel.h"
 
 /* GUC parameter */
 int			GinFuzzySearchLimit = 0;
@@ -33,11 +35,18 @@ typedef struct pendingPosition
 } pendingPosition;
 
 
+static void
+GinPredicateLockPage(Relation index, BlockNumber blkno, Snapshot snapshot)
+{
+	if (!GinGetUseFastUpdate(index))
+			PredicateLockPage(index, blkno, snapshot);
+}
+
 /*
  * Goes to the next page if current offset is outside of bounds
  */
 static bool
-moveRightIfItNeeded(GinBtreeData *btree, GinBtreeStack *stack)
+moveRightIfItNeeded(GinBtreeData *btree, GinBtreeStack *stack, Snapshot snapshot)
 {
 	Page		page = BufferGetPage(stack->buffer);
 
@@ -73,6 +82,9 @@ scanPostingTree(Relation index, GinScanEntry scanEntry,
 	/* Descend to the leftmost leaf page */
 	stack = ginScanBeginPostingTree(&btree, index, rootPostingTree, snapshot);
 	buffer = stack->buffer;
+
+	GinPredicateLockPage(index, BufferGetBlockNumber(buffer), snapshot);
+
 	IncrBufferRefCount(buffer); /* prevent unpin in freeGinBtreeStack */
 
 	freeGinBtreeStack(stack);
@@ -94,6 +106,8 @@ scanPostingTree(Relation index, GinScanEntry scanEntry,
 			break;				/* no more pages */
 
 		buffer = ginStepRight(buffer, index, GIN_SHARE);
+
+		GinPredicateLockPage(index, BufferGetBlockNumber(buffer), snapshot);
 	}
 
 	UnlockReleaseBuffer(buffer);
@@ -131,6 +145,8 @@ collectMatchBitmap(GinBtreeData *btree, GinBtreeStack *stack,
 	attnum = scanEntry->attnum;
 	attr = TupleDescAttr(btree->ginstate->origTupdesc, attnum - 1);
 
+	GinPredicateLockPage(btree->index, stack->buffer, snapshot);
+
 	for (;;)
 	{
 		Page		page;
@@ -141,7 +157,7 @@ collectMatchBitmap(GinBtreeData *btree, GinBtreeStack *stack,
 		/*
 		 * stack->off points to the interested entry, buffer is already locked
 		 */
-		if (moveRightIfItNeeded(btree, stack) == false)
+		if (moveRightIfItNeeded(btree, stack, snapshot) == false)
 			return true;
 
 		page = BufferGetPage(stack->buffer);
@@ -250,7 +266,7 @@ collectMatchBitmap(GinBtreeData *btree, GinBtreeStack *stack,
 				Datum		newDatum;
 				GinNullCategory newCategory;
 
-				if (moveRightIfItNeeded(btree, stack) == false)
+				if (moveRightIfItNeeded(btree, stack, snapshot) == false)
 					elog(ERROR, "lost saved point in index");	/* must not happen !!! */
 
 				page = BufferGetPage(stack->buffer);
@@ -323,6 +339,15 @@ restartScanEntry:
 						ginstate);
 	stackEntry = ginFindLeafPage(&btreeEntry, true, snapshot);
 	page = BufferGetPage(stackEntry->buffer);
+
+	/*
+	 * If fast update is enabled, we acquire a predicate lock on the entire
+	 * relation as fast update postpones the insertion of tuples into index
+	 * structure due to which we can't detect rw conflicts.
+	 */
+	if (GinGetUseFastUpdate(ginstate->index))
+		PredicateLockRelation(ginstate->index, snapshot);
+
 	/* ginFindLeafPage() will have already checked snapshot age. */
 	needUnlock = true;
 
@@ -391,6 +416,8 @@ restartScanEntry:
 											rootPostingTree, snapshot);
 			entry->buffer = stack->buffer;
 
+			GinPredicateLockPage(ginstate->index, BufferGetBlockNumber(entry->buffer), snapshot);
+
 			/*
 			 * We keep buffer pinned because we need to prevent deletion of
 			 * page during scan. See GIN's vacuum implementation. RefCount is
@@ -414,6 +441,8 @@ restartScanEntry:
 		}
 		else if (GinGetNPosting(itup) > 0)
 		{
+			GinPredicateLockPage(ginstate->index, BufferGetBlockNumber(stackEntry->buffer), snapshot);
+
 			entry->list = ginReadTuple(ginstate, entry->attnum, itup,
 									   &entry->nlist);
 			entry->predictNumberResult = entry->nlist;
@@ -493,7 +522,7 @@ startScanKey(GinState *ginstate, GinScanOpaque so, GinScanKey key)
 
 		for (i = 0; i < key->nentries - 1; i++)
 		{
-			/* Pass all entries <= i as FALSE, and the rest as MAYBE */
+			/* Pass all entries <= i as false, and the rest as MAYBE */
 			for (j = 0; j <= i; j++)
 				key->entryRes[entryIndexes[j]] = GIN_FALSE;
 			for (j = i + 1; j < key->nentries; j++)
@@ -633,6 +662,8 @@ entryLoadMoreItems(GinState *ginstate, GinScanEntry entry,
 		entry->btree.fullScan = false;
 		stack = ginFindLeafPage(&entry->btree, true, snapshot);
 
+		GinPredicateLockPage(ginstate->index, BufferGetBlockNumber(stack->buffer), snapshot);
+
 		/* we don't need the stack, just the buffer. */
 		entry->buffer = stack->buffer;
 		IncrBufferRefCount(entry->buffer);
@@ -677,6 +708,10 @@ entryLoadMoreItems(GinState *ginstate, GinScanEntry entry,
 			entry->buffer = ginStepRight(entry->buffer,
 										 ginstate->index,
 										 GIN_SHARE);
+
+			GinPredicateLockPage(ginstate->index, BufferGetBlockNumber(entry->buffer), snapshot);
+
+
 			page = BufferGetPage(entry->buffer);
 		}
 		stepright = true;
@@ -1038,8 +1073,8 @@ keyGetItem(GinState *ginstate, MemoryContext tempCtx, GinScanKey key,
 	 * lossy page even when none of the other entries match.
 	 *
 	 * Our strategy is to call the tri-state consistent function, with the
-	 * lossy-page entries set to MAYBE, and all the other entries FALSE. If it
-	 * returns FALSE, none of the lossy items alone are enough for a match, so
+	 * lossy-page entries set to MAYBE, and all the other entries false. If it
+	 * returns false, none of the lossy items alone are enough for a match, so
 	 * we don't need to return a lossy-page pointer. Otherwise, return a
 	 * lossy-page pointer to indicate that the whole heap page must be
 	 * checked.  (On subsequent calls, we'll do nothing until minItem is past
@@ -1732,6 +1767,13 @@ scanPendingInsert(IndexScanDesc scan, TIDBitmap *tbm, int64 *ntids)
 		UnlockReleaseBuffer(metabuffer);
 		return;
 	}
+
+	/*
+	 * If fast update is disabled, but some items still exist in the pending
+	 * list, then a predicate lock on the entire relation is required.
+	 */
+	if (GinGetPendingListCleanupSize(scan->indexRelation))
+		PredicateLockRelation(scan->indexRelation, scan->xs_snapshot);
 
 	pos.pendingBuffer = ReadBuffer(scan->indexRelation, blkno);
 	LockBuffer(pos.pendingBuffer, GIN_SHARE);
